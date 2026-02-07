@@ -307,12 +307,12 @@ Views.Operators = (() => {
               <div class="form-row">
                 <div class="form-group" id="group-netDaily">
                   <label for="op-netDaily">Net journalier souhaité (&euro;)</label>
-                  <input type="number" id="op-netDaily" class="form-control" min="0" step="1"
+                  <input type="number" id="op-netDaily" class="form-control" min="0" step="any"
                          value="${op.netDaily || ''}" placeholder="Ex : 250" />
                 </div>
                 <div class="form-group" id="group-companyCost">
                   <label for="op-companyCostDaily">Coût max entreprise / jour (&euro;)</label>
-                  <input type="number" id="op-companyCostDaily" class="form-control" min="0" step="1"
+                  <input type="number" id="op-companyCostDaily" class="form-control" min="0" step="any"
                          value="${op.companyCostDaily || ''}" placeholder="Ex : 450" />
                 </div>
               </div>
@@ -674,9 +674,11 @@ Views.Operators = (() => {
     });
 
     overlay.querySelector('#del-confirm').addEventListener('click', () => {
+      const name = (op.firstName || '') + ' ' + (op.lastName || '');
       DB.operators.delete(op.id);
       closeConfirm();
       _renderPage();
+      Toast.show('Opérateur « ' + name.trim() + ' » supprimé.', 'warning');
     });
   }
 
@@ -722,8 +724,10 @@ Views.Operators = (() => {
 
     if (operatorId) {
       DB.operators.update(operatorId, data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » mis à jour.', 'success');
     } else {
       DB.operators.create(data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » créé.', 'success');
     }
 
     overlay.remove();

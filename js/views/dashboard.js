@@ -45,6 +45,25 @@ Views.Dashboard = {
       return '';
     }
 
+    /* AMÉLIORATION P1 — Seuil plancher auto-calculé */
+    const seuilPlancher = Engine.calculateSeuilPlancher(settings);
+
+    /* AMÉLIORATION P5 — Point mort + Trésorerie */
+    const pointMort = Engine.calculatePointMort();
+    const tresorerie = Engine.calculateTresorerie();
+
+    function tresorerieClass(val) {
+      if (val > 10000) return 'kpi-success';
+      if (val >= 0) return 'kpi-warning';
+      return 'kpi-alert';
+    }
+
+    function pointMortClass(pm) {
+      if (pm.statut === 'Atteint') return 'kpi-success';
+      if (pm.statut === 'Impossible') return 'kpi-alert';
+      return '';
+    }
+
     const kpiCardsHTML = `
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -86,6 +105,21 @@ Views.Dashboard = {
           <div class="kpi-label">Charge opérateur max</div>
           <div class="kpi-value">${kpis.maxOperatorLoad} <span style="font-size:0.9rem;font-weight:400;">sess/mois</span></div>
           <div class="kpi-detail">Seuil : ${kpis.operatorLoadThreshold} sessions/mois</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Seuil plancher / session <span class="tag tag-blue" style="margin-left:4px;font-size:0.6rem;">Auto</span></div>
+          <div class="kpi-value text-mono">${Engine.fmt(seuilPlancher)}</div>
+          <div class="kpi-detail">Charges fixes + amort. / ${settings.nbJoursObjectifAnnuel || 50}j + variables</div>
+        </div>
+        <div class="kpi-card ${pointMortClass(pointMort)}">
+          <div class="kpi-label">Point mort annuel</div>
+          <div class="kpi-value">${pointMort.realisees} / ${pointMort.nbSessions || '—'}</div>
+          <div class="kpi-detail">${pointMort.statut === 'Impossible' ? 'Données insuffisantes' : pointMort.restantes + ' session(s) restante(s) — ' + pointMort.statut}</div>
+        </div>
+        <div class="kpi-card ${tresorerieClass(tresorerie.tresorerie)}">
+          <div class="kpi-label">Trésorerie théorique</div>
+          <div class="kpi-value text-mono">${Engine.fmt(tresorerie.tresorerie)}</div>
+          <div class="kpi-detail">CA ${Engine.fmt(tresorerie.caRealise)} — Charges ${Engine.fmt(tresorerie.chargesProrata)}</div>
         </div>
       </div>
     `;

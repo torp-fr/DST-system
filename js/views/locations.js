@@ -198,7 +198,7 @@ Views.Locations = {
                 <div class="form-group">
                   <label for="loc-cost">Coût par session</label>
                   <input type="number" id="loc-cost" name="costPerSession" class="form-control"
-                         value="${data.costPerSession != null ? data.costPerSession : ''}" min="0" step="0.01"
+                         value="${data.costPerSession != null ? data.costPerSession : ''}" min="0" step="any"
                          placeholder="0 si propriétaire">
                   <span class="form-help">0 si lieu détenu en propre</span>
                 </div>
@@ -341,9 +341,11 @@ Views.Locations = {
         if (hiddenId) {
           /* Mode édition */
           DB.locations.update(hiddenId.value, data);
+          Toast.show('Lieu « ' + data.name + ' » mis à jour.', 'success');
         } else {
           /* Mode création */
           DB.locations.create(data);
+          Toast.show('Lieu « ' + data.name + ' » créé.', 'success');
         }
 
         closeModal();
@@ -359,18 +361,18 @@ Views.Locations = {
     /* ----------------------------------------------------------
        Suppression d'un lieu (avec confirmation)
        ---------------------------------------------------------- */
-    function confirmDelete(id) {
+    function confirmDeleteLocation(id) {
       const loc = DB.locations.getById(id);
       if (!loc) return;
 
-      /* Demande de confirmation simple */
-      const ok = window.confirm(
-        'Supprimer le lieu « ' + (loc.name || id) + ' » ?\nCette action est irréversible.'
-      );
+      /* Utilise la confirmation renforcée globale */
+      const ok = confirmDelete(loc.name || id);
       if (!ok) return;
 
+      const name = loc.name || '';
       DB.locations.delete(id);
       refresh();
+      Toast.show('Lieu « ' + name + ' » supprimé.', 'warning');
     }
 
     /* ----------------------------------------------------------
@@ -400,7 +402,7 @@ Views.Locations = {
       /* Boutons Supprimer */
       document.querySelectorAll('.loc-btn-delete').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          confirmDelete(this.dataset.id);
+          confirmDeleteLocation(this.dataset.id);
         });
       });
 

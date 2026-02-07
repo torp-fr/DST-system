@@ -507,6 +507,213 @@ const Engine = (() => {
     return labels[type] || type;
   }
 
+  /* ----------------------------------------------------------
+     AMÉLIORATION P1 — Seuil plancher automatique
+     ---------------------------------------------------------- */
+
+  /** Calcule le seuil plancher journalier auto-calculé */
+  function calculateSeuilPlancher(settings) {
+    const s = settings || DB.settings.get();
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+    const nbJours = Math.max(s.nbJoursObjectifAnnuel || 50, 1);
+    const totalVarDefaut = (s.defaultSessionVariableCosts || []).reduce((sum, v) => sum + (v.amount || 0), 0);
+    return round2(((totalFixed + totalAmort) / nbJours) + totalVarDefaut);
+  }
+
+  /* ----------------------------------------------------------
+     AMÉLIORATION P5 — Point mort + Trésorerie
+     ---------------------------------------------------------- */
+
+  /** Calcule le point mort annuel */
+  function calculatePointMort() {
+    const s = DB.settings.get();
+    const sessions = DB.sessions.getAll();
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+    const totalCharges = totalFixed + totalAmort;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const pastSessions = sessions.filter(sess => {
+      const d = new Date(sess.date);
+      return d < now && d.getFullYear() === currentYear && sess.status !== 'annulee';
+    });
+
+    let margeTotale = 0;
+    pastSessions.forEach(sess => {
+      if (sess.price > 0) {
+        const cost = computeSessionCost(sess);
+        margeTotale += cost.margin;
+      }
+    });
+    const margeMoyenne = pastSessions.length > 0 ? margeTotale / pastSessions.length : 0;
+
+    if (margeMoyenne <= 0) {
+      return { nbSessions: 0, realisees: pastSessions.length, restantes: 0, statut: 'Impossible', totalCharges };
+    }
+
+    const nbSessionsNecessaires = Math.ceil(totalCharges / margeMoyenne);
+    const reste = nbSessionsNecessaires - pastSessions.length;
+    return {
+      nbSessions: nbSessionsNecessaires,
+      realisees: pastSessions.length,
+      restantes: Math.max(0, reste),
+      statut: reste <= 0 ? 'Atteint' : 'En cours',
+      totalCharges
+    };
+  }
+
+  /** Calcule la trésorerie théorique */
+  function calculateTresorerie() {
+    const s = DB.settings.get();
+    const sessions = DB.sessions.getAll();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+
+    const caRealise = sessions
+      .filter(sess => new Date(sess.date) < now && sess.status !== 'annulee' && new Date(sess.date).getFullYear() === currentYear)
+      .reduce((sum, sess) => sum + (sess.price || 0), 0);
+
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+
+    // Charges au prorata du temps écoulé dans l'année
+    const dayOfYear = Math.ceil((now - new Date(currentYear, 0, 1)) / 86400000);
+    const prorata = dayOfYear / 365;
+    const chargesProrata = round2((totalFixed + totalAmort) * prorata);
+
+    // Coûts variables réels des sessions passées
+    let coutsVariablesReels = 0;
+    sessions.filter(sess => new Date(sess.date) < now && sess.status !== 'annulee' && new Date(sess.date).getFullYear() === currentYear).forEach(sess => {
+      const cost = computeSessionCost(sess);
+      coutsVariablesReels += cost.operatorsCost + cost.modulesCost + cost.variableCosts;
+    });
+
+    const tresorerie = round2(caRealise - chargesProrata - coutsVariablesReels);
+    return { caRealise: round2(caRealise), chargesProrata, coutsVariablesReels: round2(coutsVariablesReels), tresorerie };
+  }
+
+  /* ----------------------------------------------------------
+     AMÉLIORATION P2 — Alertes RH enrichies
+     Ajout à computeAllAlerts : requalification URSSAF,
+     intérim >18 mois, surcharge enrichie
+     ---------------------------------------------------------- */
+
+  const _origComputeAllAlerts = computeAllAlerts;
+
+  // Remplace par version enrichie
+  computeAllAlerts = function() {
+    const alerts = _origComputeAllAlerts();
+    const s = DB.settings.get();
+    const allSessions = DB.sessions.getAll();
+    const allOperators = DB.operators.getAll();
+    const now = new Date();
+
+    // AMÉLIORATION P2-A : Requalification URSSAF (freelance >45j en 3 mois)
+    const threeMonthsAgo = new Date(now);
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    allOperators.filter(op => op.status === 'freelance' && op.active !== false).forEach(op => {
+      const sessions3m = allSessions.filter(sess =>
+        sess.status !== 'annulee' &&
+        (sess.operatorIds || []).includes(op.id) &&
+        new Date(sess.date) >= threeMonthsAgo && new Date(sess.date) <= now
+      );
+      if (sessions3m.length > 45) {
+        alerts.push({
+          level: 'critical',
+          message: `${op.firstName} ${op.lastName} : ${sessions3m.length} jours en 3 mois — risque requalification URSSAF`,
+          context: 'RH — Requalification',
+          operatorId: op.id
+        });
+      } else if (sessions3m.length > 30) {
+        alerts.push({
+          level: 'warning',
+          message: `${op.firstName} ${op.lastName} : ${sessions3m.length} jours en 3 mois — vigilance requalification`,
+          context: 'RH — Requalification',
+          operatorId: op.id
+        });
+      }
+    });
+
+    // AMÉLIORATION P2-B : Intérim >18 mois (obligation CDI)
+    allOperators.filter(op => op.status === 'interim' && op.active !== false).forEach(op => {
+      const totalSessions = allSessions.filter(sess =>
+        sess.status !== 'annulee' &&
+        (sess.operatorIds || []).includes(op.id)
+      ).length;
+      if (totalSessions > 365) {
+        alerts.push({
+          level: 'critical',
+          message: `${op.firstName} ${op.lastName} : ${totalSessions} jours cumulés en intérim — obligation légale bascule CDI`,
+          context: 'RH — Obligation CDI',
+          operatorId: op.id
+        });
+      } else if (totalSessions > 270) {
+        alerts.push({
+          level: 'warning',
+          message: `${op.firstName} ${op.lastName} : ${totalSessions} jours cumulés en intérim — approche seuil 18 mois`,
+          context: 'RH — Obligation CDI',
+          operatorId: op.id
+        });
+      }
+    });
+
+    // AMÉLIORATION P4 : Alertes consommation abonnements
+    const allOffers = DB.offers.getAll();
+    allOffers.filter(o => o.type === 'abonnement' && o.active !== false).forEach(abo => {
+      const nbSessions = abo.nbSessions || 0;
+      const consumed = abo.sessionsConsumed || 0;
+      if (nbSessions <= 0) return;
+      const pct = (consumed / nbSessions) * 100;
+
+      if (pct >= 100) {
+        alerts.push({
+          level: 'critical',
+          message: `${abo.label} : ${consumed}/${nbSessions} sessions consommées — abonnement épuisé`,
+          context: 'Abonnement épuisé'
+        });
+      } else if (pct >= 80) {
+        alerts.push({
+          level: 'warning',
+          message: `${abo.label} : ${pct.toFixed(0)}% consommé (${nbSessions - consumed} sessions restantes)`,
+          context: 'Abonnement'
+        });
+      }
+
+      // Alerte expiration date
+      if (abo.endDate) {
+        const endDate = new Date(abo.endDate);
+        const daysLeft = Math.ceil((endDate - now) / 86400000);
+        if (daysLeft < 0) {
+          alerts.push({
+            level: 'critical',
+            message: `${abo.label} : abonnement expiré depuis ${Math.abs(daysLeft)} jours`,
+            context: 'Abonnement expiré'
+          });
+        } else if (daysLeft <= 30) {
+          alerts.push({
+            level: 'warning',
+            message: `${abo.label} : expire dans ${daysLeft} jours`,
+            context: 'Abonnement — Expiration'
+          });
+        }
+      }
+    });
+
+    return alerts;
+  };
+
   /* --- API publique --- */
   return {
     netToCompanyCost,
@@ -517,6 +724,9 @@ const Engine = (() => {
     computeOfferFloor,
     computeAllAlerts,
     computeDashboardKPIs,
+    calculateSeuilPlancher,
+    calculatePointMort,
+    calculateTresorerie,
     round2,
     fmt,
     fmtPercent,

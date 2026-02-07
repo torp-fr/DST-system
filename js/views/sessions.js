@@ -343,6 +343,7 @@ Views.Sessions = {
         DB.sessions.delete(session.id);
         close();
         renderMain();
+        Toast.show('Session supprimée.', 'warning');
       });
     }
 
@@ -520,7 +521,7 @@ Views.Sessions = {
           </div>
           <div class="form-group" style="margin-bottom:0">
             ${i === 0 ? '<label>Montant</label>' : ''}
-            <input type="number" class="form-control vc-amount" value="${vc.amount || 0}" min="0" step="0.01">
+            <input type="number" class="form-control vc-amount" value="${vc.amount || 0}" min="0" step="any">
           </div>
           <div style="padding-bottom:2px">
             <button type="button" class="btn btn-sm vc-remove" data-idx="${i}" title="Retirer">&times;</button>
@@ -675,7 +676,8 @@ Views.Sessions = {
                   <div class="form-group">
                     <label for="sess-price">Prix facturé (EUR)</label>
                     <input type="number" id="sess-price" class="form-control"
-                           value="${data.price || 0}" min="0" step="0.01">
+                           value="${data.price || 0}" min="0" step="any">
+                    <div class="validation-hint" id="sess-price-hint"></div>
                   </div>
 
                   <!-- Lieu -->
@@ -801,6 +803,35 @@ Views.Sessions = {
         form.querySelector('.btn-cancel').addEventListener('click', closeModal);
         overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
+        // Validation prix vs seuil plancher en temps réel
+        function validatePrice() {
+          const priceInput = form.querySelector('#sess-price');
+          const hint = form.querySelector('#sess-price-hint');
+          if (!priceInput || !hint) return;
+          const price = parseFloat(priceInput.value) || 0;
+          const seuilPlancher = typeof Engine.calculateSeuilPlancher === 'function' ? Engine.calculateSeuilPlancher() : 0;
+          if (price > 0 && seuilPlancher > 0 && price < seuilPlancher) {
+            priceInput.classList.add('field-invalid');
+            priceInput.classList.remove('field-valid');
+            hint.className = 'validation-hint hint-danger';
+            hint.textContent = 'Sous le seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
+          } else if (price > 0) {
+            priceInput.classList.add('field-valid');
+            priceInput.classList.remove('field-invalid');
+            hint.className = 'validation-hint hint-ok';
+            hint.textContent = 'Au-dessus du seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
+          } else {
+            priceInput.classList.remove('field-valid', 'field-invalid');
+            hint.className = 'validation-hint';
+            hint.textContent = '';
+          }
+        }
+        const priceEl = form.querySelector('#sess-price');
+        if (priceEl) {
+          priceEl.addEventListener('input', validatePrice);
+          validatePrice();
+        }
+
         // Champs qui déclenchent un recalcul des coûts
         const recalcFields = [
           '#sess-price', '#sess-location', '#sess-offer'
@@ -859,8 +890,10 @@ Views.Sessions = {
 
           if (isEdit) {
             DB.sessions.update(session.id, data);
+            Toast.show('Session mise à jour.', 'success');
           } else {
             DB.sessions.create(data);
+            Toast.show('Session créée.', 'success');
           }
 
           // Mise à jour consommation abonnement si la session passe à « terminée »
