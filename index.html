@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DST-SYSTEM — Pilotage Stratégique</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- Favicon placeholder -->
+  <link rel="icon" href="img/logo.png" type="image/png">
+</head>
+<body>
+
+  <!-- Shell principal de l'application -->
+  <div id="app-shell">
+
+    <!-- Barre latérale de navigation -->
+    <aside id="sidebar"></aside>
+
+    <!-- Zone principale -->
+    <main id="main-area">
+      <!-- En-tête contextuel -->
+      <header id="header"></header>
+
+      <!-- Contenu dynamique (rendu par le routeur) -->
+      <section id="content"></section>
+    </main>
+  </div>
+
+  <!-- Scripts : ordre de chargement important -->
+  <!-- 1. Couche de données -->
+  <script src="js/db.js"></script>
+  <!-- 2. Moteur économique -->
+  <script src="js/engine.js"></script>
+  <!-- 3. Vues (modules fonctionnels) -->
+  <script src="js/views/dashboard.js"></script>
+  <script src="js/views/clients.js"></script>
+  <script src="js/views/offers.js"></script>
+  <script src="js/views/sessions.js"></script>
+  <script src="js/views/operators.js"></script>
+  <script src="js/views/modules.js"></script>
+  <script src="js/views/locations.js"></script>
+  <script src="js/views/settings.js"></script>
+  <!-- 4. Application principale (routeur) -->
+  <script src="js/app.js"></script>
+
+</body>
+</html>
