@@ -674,9 +674,11 @@ Views.Operators = (() => {
     });
 
     overlay.querySelector('#del-confirm').addEventListener('click', () => {
+      const name = (op.firstName || '') + ' ' + (op.lastName || '');
       DB.operators.delete(op.id);
       closeConfirm();
       _renderPage();
+      Toast.show('Opérateur « ' + name.trim() + ' » supprimé.', 'warning');
     });
   }
 
@@ -722,8 +724,10 @@ Views.Operators = (() => {
 
     if (operatorId) {
       DB.operators.update(operatorId, data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » mis à jour.', 'success');
     } else {
       DB.operators.create(data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » créé.', 'success');
     }
 
     overlay.remove();

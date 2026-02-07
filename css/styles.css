@@ -1187,3 +1187,49 @@ textarea.form-control {
 .trend-up { color: var(--color-success); }
 .trend-down { color: var(--accent-red-light); }
 .trend-flat { color: var(--color-warning); }
+
+/* ============================================================
+   TOAST NOTIFICATIONS
+   ============================================================ */
+#toast-container {
+  position: fixed; top: 20px; right: 20px; z-index: 10000;
+  display: flex; flex-direction: column; gap: 10px;
+  pointer-events: none; max-width: 400px;
+}
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: 10px;
+  font-size: 0.88rem; font-weight: 500;
+  color: var(--text-heading);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+  pointer-events: auto;
+  opacity: 0; transform: translateX(40px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.toast-visible { opacity: 1; transform: translateX(0); }
+.toast-exit { opacity: 0; transform: translateX(40px) scale(0.95); }
+.toast-icon { font-size: 1.1rem; flex-shrink: 0; }
+.toast-msg { flex: 1; line-height: 1.4; }
+.toast-success { border-color: var(--color-success); }
+.toast-success .toast-icon { color: var(--color-success); }
+.toast-error { border-color: var(--accent-red); }
+.toast-error .toast-icon { color: var(--accent-red); }
+.toast-warning { border-color: var(--color-warning); }
+.toast-warning .toast-icon { color: var(--color-warning); }
+.toast-info { border-color: var(--border-light); }
+.toast-info .toast-icon { color: var(--neon-red, #e53935); }
+
+/* ============================================================
+   REAL-TIME VALIDATION FEEDBACK
+   ============================================================ */
+.field-valid { border-color: var(--color-success) !important; box-shadow: 0 0 0 2px rgba(76,175,80,0.15) !important; }
+.field-invalid { border-color: var(--accent-red) !important; box-shadow: 0 0 0 2px rgba(229,57,53,0.15) !important; }
+.validation-hint {
+  font-size: 0.76rem; margin-top: 4px; padding: 2px 0;
+  transition: color 0.2s;
+}
+.validation-hint.hint-ok { color: var(--color-success); }
+.validation-hint.hint-warn { color: var(--color-warning); }
+.validation-hint.hint-danger { color: var(--accent-red-light); }

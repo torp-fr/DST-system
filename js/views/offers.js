@@ -314,6 +314,7 @@ Views.Offers = {
 
       DB.offers.create(clone);
       renderMain();
+      Toast.show('Offre dupliquée.', 'success');
     }
 
     /* ==========================================================
@@ -324,11 +325,13 @@ Views.Offers = {
       const offer = DB.offers.getById(id);
       if (!offer) return;
 
-      const confirmed = confirm(`Supprimer l'offre "${offer.label || '(sans nom)'}" ?\nCette action est irr\u00e9versible.`);
+      const confirmed = confirmDelete(offer.label || '(sans nom)');
       if (!confirmed) return;
 
+      const name = offer.label || '';
       DB.offers.delete(id);
       renderMain();
+      Toast.show('Offre « ' + name + ' » supprimée.', 'warning');
     }
 
     /* ==========================================================
@@ -696,8 +699,10 @@ Views.Offers = {
 
         if (isEdit) {
           DB.offers.update(offerId, offerData);
+          Toast.show('Offre « ' + label + ' » mise à jour.', 'success');
         } else {
           DB.offers.create(offerData);
+          Toast.show('Offre « ' + label + ' » créée.', 'success');
         }
 
         closeModal();

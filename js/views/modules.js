@@ -429,11 +429,13 @@ Views.Modules = {
       });
 
       overlay.querySelector('#btn-del-confirm').addEventListener('click', () => {
+        const modName = mod.name || '';
         /* Nettoyer les références d'incompatibilité dans les autres modules */
         removeIncompatibilityRefs(mod.id);
         DB.modules.delete(mod.id);
         close();
         renderPage();
+        Toast.show('Module « ' + modName + ' » supprimé.', 'warning');
       });
     }
 
@@ -624,10 +626,12 @@ Views.Modules = {
           DB.modules.update(existingMod.id, data);
           /* Synchroniser les incompatibilités bidirectionnelles */
           syncIncompatibilities(existingMod.id, incompatibilities);
+          Toast.show('Module « ' + name + ' » mis à jour.', 'success');
         } else {
           const created = DB.modules.create(data);
           /* Synchroniser les incompatibilités bidirectionnelles */
           syncIncompatibilities(created.id, incompatibilities);
+          Toast.show('Module « ' + name + ' » créé.', 'success');
         }
 
         close();

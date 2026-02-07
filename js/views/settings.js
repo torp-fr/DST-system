@@ -31,7 +31,8 @@ Views.Settings = {
       targetMarginPercent:      settings.targetMarginPercent ?? 30,
       marginAlertThreshold:     settings.marginAlertThreshold ?? 15,
       vatRate:                  settings.vatRate ?? 20,
-      estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100
+      estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
+      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50
     };
 
     /* ----------------------------------------------------------
@@ -252,6 +253,18 @@ Views.Settings = {
               <span class="form-help">Base de répartition des coûts fixes par session</span>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="eco-nb-jours">Jours objectif / an</label>
+              <input type="number" id="eco-nb-jours" class="form-control" value="${state.nbJoursObjectifAnnuel || 50}" min="0" step="any">
+              <span class="form-help">Nombre de jours d'activité objectif annuel (calcul seuil plancher)</span>
+            </div>
+            <div class="form-group">
+              <label>Seuil plancher auto-calculé <span class="tag tag-blue" style="font-size:0.6rem;margin-left:4px;">Auto</span></label>
+              <div class="form-control" style="background:transparent;border-color:var(--color-info);font-weight:700;color:var(--text-heading);font-family:var(--font-mono);" id="eco-seuil-plancher">${Engine.fmt(Engine.calculateSeuilPlancher(state))}</div>
+              <span class="form-help">(Charges fixes + Amort.) / Jours objectif + Variables défaut</span>
+            </div>
+          </div>
         </div>`;
     }
 
@@ -470,6 +483,11 @@ Views.Settings = {
       state.marginAlertThreshold     = parseFloat($('#eco-margin-alert').value) || 0;
       state.vatRate                  = parseFloat($('#eco-vat').value) || 0;
       state.estimatedAnnualSessions  = parseInt($('#eco-est-sessions').value, 10) || 1;
+      state.nbJoursObjectifAnnuel    = parseInt($('#eco-nb-jours').value, 10) || 50;
+
+      // Mettre à jour l'affichage du seuil plancher auto-calculé
+      const seuilEl = $('#eco-seuil-plancher');
+      if (seuilEl) seuilEl.textContent = Engine.fmt(Engine.calculateSeuilPlancher(state));
     }
 
     /** Synchronise l'intégralité du state depuis les valeurs DOM */
@@ -670,13 +688,15 @@ Views.Settings = {
           targetMarginPercent:         state.targetMarginPercent,
           marginAlertThreshold:        state.marginAlertThreshold,
           vatRate:                     state.vatRate,
-          estimatedAnnualSessions:     state.estimatedAnnualSessions
+          estimatedAnnualSessions:     state.estimatedAnnualSessions,
+          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel
         };
 
         DB.settings.update(update);
 
         /* Confirmation visuelle */
         showFeedback('Paramètres enregistrés avec succès.', 'success');
+        Toast.show('Paramètres enregistrés.', 'success');
       });
     }
 

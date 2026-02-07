@@ -1194,6 +1194,52 @@ textarea.form-control {
 .trend-up { color: var(--color-success); }
 .trend-down { color: var(--accent-red-light); }
 .trend-flat { color: var(--color-warning); }
+
+/* ============================================================
+   TOAST NOTIFICATIONS
+   ============================================================ */
+#toast-container {
+  position: fixed; top: 20px; right: 20px; z-index: 10000;
+  display: flex; flex-direction: column; gap: 10px;
+  pointer-events: none; max-width: 400px;
+}
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-radius: 10px;
+  font-size: 0.88rem; font-weight: 500;
+  color: var(--text-heading);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+  pointer-events: auto;
+  opacity: 0; transform: translateX(40px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.toast-visible { opacity: 1; transform: translateX(0); }
+.toast-exit { opacity: 0; transform: translateX(40px) scale(0.95); }
+.toast-icon { font-size: 1.1rem; flex-shrink: 0; }
+.toast-msg { flex: 1; line-height: 1.4; }
+.toast-success { border-color: var(--color-success); }
+.toast-success .toast-icon { color: var(--color-success); }
+.toast-error { border-color: var(--accent-red); }
+.toast-error .toast-icon { color: var(--accent-red); }
+.toast-warning { border-color: var(--color-warning); }
+.toast-warning .toast-icon { color: var(--color-warning); }
+.toast-info { border-color: var(--border-light); }
+.toast-info .toast-icon { color: var(--neon-red, #e53935); }
+
+/* ============================================================
+   REAL-TIME VALIDATION FEEDBACK
+   ============================================================ */
+.field-valid { border-color: var(--color-success) !important; box-shadow: 0 0 0 2px rgba(76,175,80,0.15) !important; }
+.field-invalid { border-color: var(--accent-red) !important; box-shadow: 0 0 0 2px rgba(229,57,53,0.15) !important; }
+.validation-hint {
+  font-size: 0.76rem; margin-top: 4px; padding: 2px 0;
+  transition: color 0.2s;
+}
+.validation-hint.hint-ok { color: var(--color-success); }
+.validation-hint.hint-warn { color: var(--color-warning); }
+.validation-hint.hint-danger { color: var(--accent-red-light); }
   </style>
 </head>
 <body>
@@ -1340,6 +1386,8 @@ const DB = (() => {
     ],
     // Nombre estimé de sessions annuelles (pour répartition coûts fixes)
     estimatedAnnualSessions: 100,
+    // Nombre de jours objectif annuels (pour seuil plancher)
+    nbJoursObjectifAnnuel: 50,
     // Coûts variables par défaut par session
     defaultSessionVariableCosts: [
       { label: 'Consommables', amount: 0 },
@@ -1435,6 +1483,7 @@ const DB = (() => {
     generateId
   };
 })();
+
 /* ============================================================
    DST-SYSTEM — Moteur Économique
    Calculs : coûts sessions, coûts RH, marges, seuils, alertes
@@ -1944,6 +1993,213 @@ const Engine = (() => {
     return labels[type] || type;
   }
 
+  /* ----------------------------------------------------------
+     AMÉLIORATION P1 — Seuil plancher automatique
+     ---------------------------------------------------------- */
+
+  /** Calcule le seuil plancher journalier auto-calculé */
+  function calculateSeuilPlancher(settings) {
+    const s = settings || DB.settings.get();
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+    const nbJours = Math.max(s.nbJoursObjectifAnnuel || 50, 1);
+    const totalVarDefaut = (s.defaultSessionVariableCosts || []).reduce((sum, v) => sum + (v.amount || 0), 0);
+    return round2(((totalFixed + totalAmort) / nbJours) + totalVarDefaut);
+  }
+
+  /* ----------------------------------------------------------
+     AMÉLIORATION P5 — Point mort + Trésorerie
+     ---------------------------------------------------------- */
+
+  /** Calcule le point mort annuel */
+  function calculatePointMort() {
+    const s = DB.settings.get();
+    const sessions = DB.sessions.getAll();
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+    const totalCharges = totalFixed + totalAmort;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const pastSessions = sessions.filter(sess => {
+      const d = new Date(sess.date);
+      return d < now && d.getFullYear() === currentYear && sess.status !== 'annulee';
+    });
+
+    let margeTotale = 0;
+    pastSessions.forEach(sess => {
+      if (sess.price > 0) {
+        const cost = computeSessionCost(sess);
+        margeTotale += cost.margin;
+      }
+    });
+    const margeMoyenne = pastSessions.length > 0 ? margeTotale / pastSessions.length : 0;
+
+    if (margeMoyenne <= 0) {
+      return { nbSessions: 0, realisees: pastSessions.length, restantes: 0, statut: 'Impossible', totalCharges };
+    }
+
+    const nbSessionsNecessaires = Math.ceil(totalCharges / margeMoyenne);
+    const reste = nbSessionsNecessaires - pastSessions.length;
+    return {
+      nbSessions: nbSessionsNecessaires,
+      realisees: pastSessions.length,
+      restantes: Math.max(0, reste),
+      statut: reste <= 0 ? 'Atteint' : 'En cours',
+      totalCharges
+    };
+  }
+
+  /** Calcule la trésorerie théorique */
+  function calculateTresorerie() {
+    const s = DB.settings.get();
+    const sessions = DB.sessions.getAll();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+
+    const caRealise = sessions
+      .filter(sess => new Date(sess.date) < now && sess.status !== 'annulee' && new Date(sess.date).getFullYear() === currentYear)
+      .reduce((sum, sess) => sum + (sess.price || 0), 0);
+
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+
+    // Charges au prorata du temps écoulé dans l'année
+    const dayOfYear = Math.ceil((now - new Date(currentYear, 0, 1)) / 86400000);
+    const prorata = dayOfYear / 365;
+    const chargesProrata = round2((totalFixed + totalAmort) * prorata);
+
+    // Coûts variables réels des sessions passées
+    let coutsVariablesReels = 0;
+    sessions.filter(sess => new Date(sess.date) < now && sess.status !== 'annulee' && new Date(sess.date).getFullYear() === currentYear).forEach(sess => {
+      const cost = computeSessionCost(sess);
+      coutsVariablesReels += cost.operatorsCost + cost.modulesCost + cost.variableCosts;
+    });
+
+    const tresorerie = round2(caRealise - chargesProrata - coutsVariablesReels);
+    return { caRealise: round2(caRealise), chargesProrata, coutsVariablesReels: round2(coutsVariablesReels), tresorerie };
+  }
+
+  /* ----------------------------------------------------------
+     AMÉLIORATION P2 — Alertes RH enrichies
+     Ajout à computeAllAlerts : requalification URSSAF,
+     intérim >18 mois, surcharge enrichie
+     ---------------------------------------------------------- */
+
+  const _origComputeAllAlerts = computeAllAlerts;
+
+  // Remplace par version enrichie
+  computeAllAlerts = function() {
+    const alerts = _origComputeAllAlerts();
+    const s = DB.settings.get();
+    const allSessions = DB.sessions.getAll();
+    const allOperators = DB.operators.getAll();
+    const now = new Date();
+
+    // AMÉLIORATION P2-A : Requalification URSSAF (freelance >45j en 3 mois)
+    const threeMonthsAgo = new Date(now);
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    allOperators.filter(op => op.status === 'freelance' && op.active !== false).forEach(op => {
+      const sessions3m = allSessions.filter(sess =>
+        sess.status !== 'annulee' &&
+        (sess.operatorIds || []).includes(op.id) &&
+        new Date(sess.date) >= threeMonthsAgo && new Date(sess.date) <= now
+      );
+      if (sessions3m.length > 45) {
+        alerts.push({
+          level: 'critical',
+          message: `${op.firstName} ${op.lastName} : ${sessions3m.length} jours en 3 mois — risque requalification URSSAF`,
+          context: 'RH — Requalification',
+          operatorId: op.id
+        });
+      } else if (sessions3m.length > 30) {
+        alerts.push({
+          level: 'warning',
+          message: `${op.firstName} ${op.lastName} : ${sessions3m.length} jours en 3 mois — vigilance requalification`,
+          context: 'RH — Requalification',
+          operatorId: op.id
+        });
+      }
+    });
+
+    // AMÉLIORATION P2-B : Intérim >18 mois (obligation CDI)
+    allOperators.filter(op => op.status === 'interim' && op.active !== false).forEach(op => {
+      const totalSessions = allSessions.filter(sess =>
+        sess.status !== 'annulee' &&
+        (sess.operatorIds || []).includes(op.id)
+      ).length;
+      if (totalSessions > 365) {
+        alerts.push({
+          level: 'critical',
+          message: `${op.firstName} ${op.lastName} : ${totalSessions} jours cumulés en intérim — obligation légale bascule CDI`,
+          context: 'RH — Obligation CDI',
+          operatorId: op.id
+        });
+      } else if (totalSessions > 270) {
+        alerts.push({
+          level: 'warning',
+          message: `${op.firstName} ${op.lastName} : ${totalSessions} jours cumulés en intérim — approche seuil 18 mois`,
+          context: 'RH — Obligation CDI',
+          operatorId: op.id
+        });
+      }
+    });
+
+    // AMÉLIORATION P4 : Alertes consommation abonnements
+    const allOffers = DB.offers.getAll();
+    allOffers.filter(o => o.type === 'abonnement' && o.active !== false).forEach(abo => {
+      const nbSessions = abo.nbSessions || 0;
+      const consumed = abo.sessionsConsumed || 0;
+      if (nbSessions <= 0) return;
+      const pct = (consumed / nbSessions) * 100;
+
+      if (pct >= 100) {
+        alerts.push({
+          level: 'critical',
+          message: `${abo.label} : ${consumed}/${nbSessions} sessions consommées — abonnement épuisé`,
+          context: 'Abonnement épuisé'
+        });
+      } else if (pct >= 80) {
+        alerts.push({
+          level: 'warning',
+          message: `${abo.label} : ${pct.toFixed(0)}% consommé (${nbSessions - consumed} sessions restantes)`,
+          context: 'Abonnement'
+        });
+      }
+
+      // Alerte expiration date
+      if (abo.endDate) {
+        const endDate = new Date(abo.endDate);
+        const daysLeft = Math.ceil((endDate - now) / 86400000);
+        if (daysLeft < 0) {
+          alerts.push({
+            level: 'critical',
+            message: `${abo.label} : abonnement expiré depuis ${Math.abs(daysLeft)} jours`,
+            context: 'Abonnement expiré'
+          });
+        } else if (daysLeft <= 30) {
+          alerts.push({
+            level: 'warning',
+            message: `${abo.label} : expire dans ${daysLeft} jours`,
+            context: 'Abonnement — Expiration'
+          });
+        }
+      }
+    });
+
+    return alerts;
+  };
+
   /* --- API publique --- */
   return {
     netToCompanyCost,
@@ -1954,6 +2210,9 @@ const Engine = (() => {
     computeOfferFloor,
     computeAllAlerts,
     computeDashboardKPIs,
+    calculateSeuilPlancher,
+    calculatePointMort,
+    calculateTresorerie,
     round2,
     fmt,
     fmtPercent,
@@ -2515,6 +2774,7 @@ const Engine = (() => {
   };
 
 })();
+
 /* ============================================================
    DST-SYSTEM — Vue Tableau de Bord (Dashboard)
    Poste de commandement stratégique pour le dirigeant.
@@ -3700,8 +3960,10 @@ Views.Clients = (() => {
 
       if (isEdit) {
         DB.clients.update(client.id, data);
+        Toast.show('Client « ' + data.name + ' » mis à jour.', 'success');
       } else {
         DB.clients.create(data);
+        Toast.show('Client « ' + data.name + ' » créé.', 'success');
       }
 
       closeModal();
@@ -3766,6 +4028,7 @@ Views.Clients = (() => {
     });
 
     overlay.querySelector('#btn-del-confirm').addEventListener('click', () => {
+      const name = client.name || '';
       DB.clients.delete(clientId);
       /* Fermer le détail si ouvert sur ce client */
       if (_expandedClientId === clientId) {
@@ -3773,6 +4036,7 @@ Views.Clients = (() => {
       }
       closeModal();
       _renderPage();
+      Toast.show('Client « ' + name + ' » supprimé.', 'warning');
     });
   }
 
@@ -3922,6 +4186,7 @@ Views.Clients = (() => {
   return { render };
 
 })();
+
 /* ============================================================
    DST-SYSTEM — Vue : Offres & Abonnements
    Gestion complète des offres commerciales (CRUD),
@@ -4238,6 +4503,7 @@ Views.Offers = {
 
       DB.offers.create(clone);
       renderMain();
+      Toast.show('Offre dupliquée.', 'success');
     }
 
     /* ==========================================================
@@ -4248,11 +4514,13 @@ Views.Offers = {
       const offer = DB.offers.getById(id);
       if (!offer) return;
 
-      const confirmed = confirm(`Supprimer l'offre "${offer.label || '(sans nom)'}" ?\nCette action est irr\u00e9versible.`);
+      const confirmed = confirmDelete(offer.label || '(sans nom)');
       if (!confirmed) return;
 
+      const name = offer.label || '';
       DB.offers.delete(id);
       renderMain();
+      Toast.show('Offre « ' + name + ' » supprimée.', 'warning');
     }
 
     /* ==========================================================
@@ -4620,8 +4888,10 @@ Views.Offers = {
 
         if (isEdit) {
           DB.offers.update(offerId, offerData);
+          Toast.show('Offre « ' + label + ' » mise à jour.', 'success');
         } else {
           DB.offers.create(offerData);
+          Toast.show('Offre « ' + label + ' » créée.', 'success');
         }
 
         closeModal();
@@ -4636,6 +4906,7 @@ Views.Offers = {
     renderMain();
   }
 };
+
 /* ============================================================
    DST-SYSTEM — Vue Sessions
    Module le plus central : relie clients, offres, modules,
@@ -4981,6 +5252,7 @@ Views.Sessions = {
         DB.sessions.delete(session.id);
         close();
         renderMain();
+        Toast.show('Session supprimée.', 'warning');
       });
     }
 
@@ -5314,6 +5586,7 @@ Views.Sessions = {
                     <label for="sess-price">Prix facturé (EUR)</label>
                     <input type="number" id="sess-price" class="form-control"
                            value="${data.price || 0}" min="0" step="any">
+                    <div class="validation-hint" id="sess-price-hint"></div>
                   </div>
 
                   <!-- Lieu -->
@@ -5439,6 +5712,35 @@ Views.Sessions = {
         form.querySelector('.btn-cancel').addEventListener('click', closeModal);
         overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
+        // Validation prix vs seuil plancher en temps réel
+        function validatePrice() {
+          const priceInput = form.querySelector('#sess-price');
+          const hint = form.querySelector('#sess-price-hint');
+          if (!priceInput || !hint) return;
+          const price = parseFloat(priceInput.value) || 0;
+          const seuilPlancher = typeof Engine.calculateSeuilPlancher === 'function' ? Engine.calculateSeuilPlancher() : 0;
+          if (price > 0 && seuilPlancher > 0 && price < seuilPlancher) {
+            priceInput.classList.add('field-invalid');
+            priceInput.classList.remove('field-valid');
+            hint.className = 'validation-hint hint-danger';
+            hint.textContent = 'Sous le seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
+          } else if (price > 0) {
+            priceInput.classList.add('field-valid');
+            priceInput.classList.remove('field-invalid');
+            hint.className = 'validation-hint hint-ok';
+            hint.textContent = 'Au-dessus du seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
+          } else {
+            priceInput.classList.remove('field-valid', 'field-invalid');
+            hint.className = 'validation-hint';
+            hint.textContent = '';
+          }
+        }
+        const priceEl = form.querySelector('#sess-price');
+        if (priceEl) {
+          priceEl.addEventListener('input', validatePrice);
+          validatePrice();
+        }
+
         // Champs qui déclenchent un recalcul des coûts
         const recalcFields = [
           '#sess-price', '#sess-location', '#sess-offer'
@@ -5497,8 +5799,10 @@ Views.Sessions = {
 
           if (isEdit) {
             DB.sessions.update(session.id, data);
+            Toast.show('Session mise à jour.', 'success');
           } else {
             DB.sessions.create(data);
+            Toast.show('Session créée.', 'success');
           }
 
           // Mise à jour consommation abonnement si la session passe à « terminée »
@@ -5533,6 +5837,7 @@ Views.Sessions = {
     renderMain();
   }
 };
+
 /* ============================================================
    DST-SYSTEM — Vue Opérateurs (Vivier RH)
    Gestion complète du pool d'opérateurs : CRUD, calcul de coûts
@@ -6209,9 +6514,11 @@ Views.Operators = (() => {
     });
 
     overlay.querySelector('#del-confirm').addEventListener('click', () => {
+      const name = (op.firstName || '') + ' ' + (op.lastName || '');
       DB.operators.delete(op.id);
       closeConfirm();
       _renderPage();
+      Toast.show('Opérateur « ' + name.trim() + ' » supprimé.', 'warning');
     });
   }
 
@@ -6257,8 +6564,10 @@ Views.Operators = (() => {
 
     if (operatorId) {
       DB.operators.update(operatorId, data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » mis à jour.', 'success');
     } else {
       DB.operators.create(data);
+      Toast.show('Opérateur « ' + data.firstName + ' ' + data.lastName + ' » créé.', 'success');
     }
 
     overlay.remove();
@@ -6478,6 +6787,7 @@ Views.Operators = (() => {
   return { render };
 
 })();
+
 /* ============================================================
    DST-SYSTEM — Vue : Catalogue des Modules de Formation
    Gestion CRUD complète des modules d'entraînement.
@@ -6909,11 +7219,13 @@ Views.Modules = {
       });
 
       overlay.querySelector('#btn-del-confirm').addEventListener('click', () => {
+        const modName = mod.name || '';
         /* Nettoyer les références d'incompatibilité dans les autres modules */
         removeIncompatibilityRefs(mod.id);
         DB.modules.delete(mod.id);
         close();
         renderPage();
+        Toast.show('Module « ' + modName + ' » supprimé.', 'warning');
       });
     }
 
@@ -7104,10 +7416,12 @@ Views.Modules = {
           DB.modules.update(existingMod.id, data);
           /* Synchroniser les incompatibilités bidirectionnelles */
           syncIncompatibilities(existingMod.id, incompatibilities);
+          Toast.show('Module « ' + name + ' » mis à jour.', 'success');
         } else {
           const created = DB.modules.create(data);
           /* Synchroniser les incompatibilités bidirectionnelles */
           syncIncompatibilities(created.id, incompatibilities);
+          Toast.show('Module « ' + name + ' » créé.', 'success');
         }
 
         close();
@@ -7187,6 +7501,7 @@ Views.Modules = {
     renderPage();
   }
 };
+
 /* ============================================================
    DST-SYSTEM — Vue : Gestion des Lieux
    CRUD complet pour les sites d'entraînement (stands de tir,
@@ -7530,9 +7845,11 @@ Views.Locations = {
         if (hiddenId) {
           /* Mode édition */
           DB.locations.update(hiddenId.value, data);
+          Toast.show('Lieu « ' + data.name + ' » mis à jour.', 'success');
         } else {
           /* Mode création */
           DB.locations.create(data);
+          Toast.show('Lieu « ' + data.name + ' » créé.', 'success');
         }
 
         closeModal();
@@ -7548,18 +7865,18 @@ Views.Locations = {
     /* ----------------------------------------------------------
        Suppression d'un lieu (avec confirmation)
        ---------------------------------------------------------- */
-    function confirmDelete(id) {
+    function confirmDeleteLocation(id) {
       const loc = DB.locations.getById(id);
       if (!loc) return;
 
-      /* Demande de confirmation simple */
-      const ok = window.confirm(
-        'Supprimer le lieu « ' + (loc.name || id) + ' » ?\nCette action est irréversible.'
-      );
+      /* Utilise la confirmation renforcée globale */
+      const ok = confirmDelete(loc.name || id);
       if (!ok) return;
 
+      const name = loc.name || '';
       DB.locations.delete(id);
       refresh();
+      Toast.show('Lieu « ' + name + ' » supprimé.', 'warning');
     }
 
     /* ----------------------------------------------------------
@@ -7589,7 +7906,7 @@ Views.Locations = {
       /* Boutons Supprimer */
       document.querySelectorAll('.loc-btn-delete').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          confirmDelete(this.dataset.id);
+          confirmDeleteLocation(this.dataset.id);
         });
       });
 
@@ -7642,6 +7959,7 @@ Views.Locations = {
     attachTableListeners();
   }
 };
+
 /* ============================================================
    DST-SYSTEM — Vue Paramètres
    Gestion complète des paramètres économiques, RH, types
@@ -7675,7 +7993,8 @@ Views.Settings = {
       targetMarginPercent:      settings.targetMarginPercent ?? 30,
       marginAlertThreshold:     settings.marginAlertThreshold ?? 15,
       vatRate:                  settings.vatRate ?? 20,
-      estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100
+      estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
+      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50
     };
 
     /* ----------------------------------------------------------
@@ -7896,6 +8215,18 @@ Views.Settings = {
               <span class="form-help">Base de répartition des coûts fixes par session</span>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="eco-nb-jours">Jours objectif / an</label>
+              <input type="number" id="eco-nb-jours" class="form-control" value="${state.nbJoursObjectifAnnuel || 50}" min="0" step="any">
+              <span class="form-help">Nombre de jours d'activité objectif annuel (calcul seuil plancher)</span>
+            </div>
+            <div class="form-group">
+              <label>Seuil plancher auto-calculé <span class="tag tag-blue" style="font-size:0.6rem;margin-left:4px;">Auto</span></label>
+              <div class="form-control" style="background:transparent;border-color:var(--color-info);font-weight:700;color:var(--text-heading);font-family:var(--font-mono);" id="eco-seuil-plancher">${Engine.fmt(Engine.calculateSeuilPlancher(state))}</div>
+              <span class="form-help">(Charges fixes + Amort.) / Jours objectif + Variables défaut</span>
+            </div>
+          </div>
         </div>`;
     }
 
@@ -8114,6 +8445,11 @@ Views.Settings = {
       state.marginAlertThreshold     = parseFloat($('#eco-margin-alert').value) || 0;
       state.vatRate                  = parseFloat($('#eco-vat').value) || 0;
       state.estimatedAnnualSessions  = parseInt($('#eco-est-sessions').value, 10) || 1;
+      state.nbJoursObjectifAnnuel    = parseInt($('#eco-nb-jours').value, 10) || 50;
+
+      // Mettre à jour l'affichage du seuil plancher auto-calculé
+      const seuilEl = $('#eco-seuil-plancher');
+      if (seuilEl) seuilEl.textContent = Engine.fmt(Engine.calculateSeuilPlancher(state));
     }
 
     /** Synchronise l'intégralité du state depuis les valeurs DOM */
@@ -8314,13 +8650,15 @@ Views.Settings = {
           targetMarginPercent:         state.targetMarginPercent,
           marginAlertThreshold:        state.marginAlertThreshold,
           vatRate:                     state.vatRate,
-          estimatedAnnualSessions:     state.estimatedAnnualSessions
+          estimatedAnnualSessions:     state.estimatedAnnualSessions,
+          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel
         };
 
         DB.settings.update(update);
 
         /* Confirmation visuelle */
         showFeedback('Paramètres enregistrés avec succès.', 'success');
+        Toast.show('Paramètres enregistrés.', 'success');
       });
     }
 
@@ -8489,6 +8827,7 @@ Views.Settings = {
     attachDataActions();
   }
 };
+
 /* ============================================================
    DST-SYSTEM — Application principale
    Routeur SPA, navigation, gestion du header et des alertes
@@ -8779,10 +9118,69 @@ const App = (() => {
   };
 })();
 
+/* ============================================================
+   AMÉLIORATION P6 — Système de toasts (notifications)
+   ============================================================ */
+const Toast = (() => {
+  'use strict';
+
+  let container = null;
+
+  function ensureContainer() {
+    if (!container || !document.body.contains(container)) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+    return container;
+  }
+
+  function show(message, type, duration) {
+    type = type || 'info';
+    duration = duration || 3500;
+    const c = ensureContainer();
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    toast.innerHTML = '<span class="toast-icon">' + iconForType(type) + '</span><span class="toast-msg">' + escapeHTML(message) + '</span>';
+    c.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+    setTimeout(() => {
+      toast.classList.remove('toast-visible');
+      toast.classList.add('toast-exit');
+      setTimeout(() => toast.remove(), 350);
+    }, duration);
+  }
+
+  function iconForType(type) {
+    switch(type) {
+      case 'success': return '\u2713';
+      case 'error':   return '\u2717';
+      case 'warning': return '\u26A0';
+      default:        return '\u2139';
+    }
+  }
+
+  function escapeHTML(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  return { show };
+})();
+
+/* ============================================================
+   AMÉLIORATION P6 — Confirmation suppression renforcée
+   ============================================================ */
+function confirmDelete(entityName) {
+  return confirm('Confirmer la suppression de "' + entityName + '" ?\nCette action est irréversible.');
+}
+
 /* --- Démarrage --- */
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
 });
+
   </script>
 </body>
 </html>

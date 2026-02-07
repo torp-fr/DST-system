@@ -133,6 +133,8 @@ const DB = (() => {
     ],
     // Nombre estimé de sessions annuelles (pour répartition coûts fixes)
     estimatedAnnualSessions: 100,
+    // Nombre de jours objectif annuels (pour seuil plancher)
+    nbJoursObjectifAnnuel: 50,
     // Coûts variables par défaut par session
     defaultSessionVariableCosts: [
       { label: 'Consommables', amount: 0 },

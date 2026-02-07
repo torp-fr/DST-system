@@ -544,8 +544,10 @@ Views.Clients = (() => {
 
       if (isEdit) {
         DB.clients.update(client.id, data);
+        Toast.show('Client « ' + data.name + ' » mis à jour.', 'success');
       } else {
         DB.clients.create(data);
+        Toast.show('Client « ' + data.name + ' » créé.', 'success');
       }
 
       closeModal();
@@ -610,6 +612,7 @@ Views.Clients = (() => {
     });
 
     overlay.querySelector('#btn-del-confirm').addEventListener('click', () => {
+      const name = client.name || '';
       DB.clients.delete(clientId);
       /* Fermer le détail si ouvert sur ce client */
       if (_expandedClientId === clientId) {
@@ -617,6 +620,7 @@ Views.Clients = (() => {
       }
       closeModal();
       _renderPage();
+      Toast.show('Client « ' + name + ' » supprimé.', 'warning');
     });
   }
 

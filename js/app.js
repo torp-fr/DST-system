@@ -288,6 +288,64 @@ const App = (() => {
   };
 })();
 
+/* ============================================================
+   AMÉLIORATION P6 — Système de toasts (notifications)
+   ============================================================ */
+const Toast = (() => {
+  'use strict';
+
+  let container = null;
+
+  function ensureContainer() {
+    if (!container || !document.body.contains(container)) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+    return container;
+  }
+
+  function show(message, type, duration) {
+    type = type || 'info';
+    duration = duration || 3500;
+    const c = ensureContainer();
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    toast.innerHTML = '<span class="toast-icon">' + iconForType(type) + '</span><span class="toast-msg">' + escapeHTML(message) + '</span>';
+    c.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+    setTimeout(() => {
+      toast.classList.remove('toast-visible');
+      toast.classList.add('toast-exit');
+      setTimeout(() => toast.remove(), 350);
+    }, duration);
+  }
+
+  function iconForType(type) {
+    switch(type) {
+      case 'success': return '\u2713';
+      case 'error':   return '\u2717';
+      case 'warning': return '\u26A0';
+      default:        return '\u2139';
+    }
+  }
+
+  function escapeHTML(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  return { show };
+})();
+
+/* ============================================================
+   AMÉLIORATION P6 — Confirmation suppression renforcée
+   ============================================================ */
+function confirmDelete(entityName) {
+  return confirm('Confirmer la suppression de "' + entityName + '" ?\nCette action est irréversible.');
+}
+
 /* --- Démarrage --- */
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
