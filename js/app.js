@@ -101,7 +101,25 @@ const App = (() => {
 
     let html = `
       <div class="sidebar-brand">
-        <img src="img/logo.png" alt="DST" onerror="this.style.display='none'">
+        <svg width="38" height="38" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="dst-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#e53935;stop-opacity:1" />
+              <stop offset="50%" style="stop-color:#ff6659;stop-opacity:1" />
+              <stop offset="100%" style="stop-color:#ab000d;stop-opacity:1" />
+            </linearGradient>
+            <filter id="dst-glow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <circle cx="50" cy="50" r="46" fill="none" stroke="url(#dst-grad)" stroke-width="3" filter="url(#dst-glow)"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="rgba(229,57,53,0.3)" stroke-width="1"/>
+          <text x="50" y="42" text-anchor="middle" font-family="Arial Black,sans-serif" font-size="26" font-weight="900" fill="url(#dst-grad)" filter="url(#dst-glow)">DST</text>
+          <line x1="22" y1="52" x2="78" y2="52" stroke="url(#dst-grad)" stroke-width="1.5" opacity="0.6"/>
+          <text x="50" y="67" text-anchor="middle" font-family="Arial,sans-serif" font-size="8" font-weight="600" fill="#a0a0a8" letter-spacing="3">SYSTEM</text>
+          <line x1="50" y1="4" x2="50" y2="12" stroke="url(#dst-grad)" stroke-width="1.5" opacity="0.4"/>
+          <line x1="50" y1="88" x2="50" y2="96" stroke="url(#dst-grad)" stroke-width="1.5" opacity="0.4"/>
+          <line x1="4" y1="50" x2="12" y2="50" stroke="url(#dst-grad)" stroke-width="1.5" opacity="0.4"/>
+          <line x1="88" y1="50" x2="96" y2="50" stroke="url(#dst-grad)" stroke-width="1.5" opacity="0.4"/>
+        </svg>
         <div>
           <div class="brand-text">DST-SYSTEM</div>
           <div class="brand-sub">Drill &amp; Skills Training</div>

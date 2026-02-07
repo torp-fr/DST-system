@@ -96,7 +96,7 @@ Views.Settings = {
             <input type="text" class="form-control fc-label" value="${escapeAttr(c.label)}" placeholder="Libellé">
           </div>
           <div class="form-group" style="flex:1;margin-bottom:0">
-            <input type="number" class="form-control fc-amount text-mono" value="${c.amount || 0}" min="0" step="100" placeholder="Montant">
+            <input type="number" class="form-control fc-amount text-mono" value="${c.amount || 0}" min="0" step="any" placeholder="Montant">
           </div>
           <button class="btn btn-sm btn-ghost fc-remove" title="Supprimer">&times;</button>
         </div>`).join('');
@@ -126,10 +126,10 @@ Views.Settings = {
             <input type="text" class="form-control am-label" value="${escapeAttr(a.label)}" placeholder="Libellé">
           </div>
           <div class="form-group" style="flex:1;margin-bottom:0">
-            <input type="number" class="form-control am-amount text-mono" value="${a.amount || 0}" min="0" step="100" placeholder="Montant achat">
+            <input type="number" class="form-control am-amount text-mono" value="${a.amount || 0}" min="0" step="any" placeholder="Montant achat">
           </div>
           <div class="form-group" style="flex:0.5;margin-bottom:0">
-            <input type="number" class="form-control am-duration" value="${a.durationYears || 1}" min="1" max="30" step="1" placeholder="Années">
+            <input type="number" class="form-control am-duration" value="${a.durationYears || 1}" min="1" step="any" placeholder="Années">
           </div>
           <span class="text-mono text-muted" style="min-width:90px;text-align:right" title="Amortissement annuel">${Engine.fmt(Engine.round2(annual))}/an</span>
           <button class="btn btn-sm btn-ghost am-remove" title="Supprimer">&times;</button>
@@ -165,7 +165,7 @@ Views.Settings = {
             <input type="text" class="form-control vc-label" value="${escapeAttr(v.label)}" placeholder="Libellé">
           </div>
           <div class="form-group" style="flex:1;margin-bottom:0">
-            <input type="number" class="form-control vc-amount text-mono" value="${v.amount || 0}" min="0" step="10" placeholder="Montant par défaut">
+            <input type="number" class="form-control vc-amount text-mono" value="${v.amount || 0}" min="0" step="any" placeholder="Montant par défaut">
           </div>
           <button class="btn btn-sm btn-ghost vc-remove" title="Supprimer">&times;</button>
         </div>`).join('');
@@ -191,31 +191,31 @@ Views.Settings = {
           <div class="form-row">
             <div class="form-group">
               <label for="rh-employer-charge">Charges patronales (%)</label>
-              <input type="number" id="rh-employer-charge" class="form-control" value="${state.employerChargeRate}" min="0" max="100" step="0.5">
+              <input type="number" id="rh-employer-charge" class="form-control" value="${state.employerChargeRate}" min="0" max="100" step="any">
               <span class="form-help">Taux appliqué sur le brut pour les salariés</span>
             </div>
             <div class="form-group">
               <label for="rh-interim-coeff">Coefficient intérim</label>
-              <input type="number" id="rh-interim-coeff" class="form-control" value="${state.interimCoefficient}" min="1" max="5" step="0.1">
+              <input type="number" id="rh-interim-coeff" class="form-control" value="${state.interimCoefficient}" min="0" step="any">
               <span class="form-help">Multiplicateur appliqué au coût de base intérim</span>
             </div>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label for="rh-freelance-charge">Charges freelance estimées (%)</label>
-              <input type="number" id="rh-freelance-charge" class="form-control" value="${state.freelanceChargeRate}" min="0" max="100" step="0.5">
+              <input type="number" id="rh-freelance-charge" class="form-control" value="${state.freelanceChargeRate}" min="0" max="100" step="any">
               <span class="form-help">Estimation des charges sociales freelance</span>
             </div>
             <div class="form-group">
               <label for="rh-overload">Seuil surcharge (sessions/mois)</label>
-              <input type="number" id="rh-overload" class="form-control" value="${state.operatorOverloadThreshold}" min="1" max="50" step="1">
+              <input type="number" id="rh-overload" class="form-control" value="${state.operatorOverloadThreshold}" min="0" step="any">
               <span class="form-help">Alerte si un opérateur dépasse ce seuil mensuel</span>
             </div>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label for="rh-cdi-threshold">Seuil bascule CDI (sessions/an)</label>
-              <input type="number" id="rh-cdi-threshold" class="form-control" value="${state.cdiThreshold}" min="1" max="365" step="1">
+              <input type="number" id="rh-cdi-threshold" class="form-control" value="${state.cdiThreshold}" min="0" step="any">
               <span class="form-help">Suggestion de CDI si un opérateur atteint ce nombre annuel</span>
             </div>
           </div>
@@ -232,23 +232,23 @@ Views.Settings = {
           <div class="form-row">
             <div class="form-group">
               <label for="eco-target-margin">Marge cible (%)</label>
-              <input type="number" id="eco-target-margin" class="form-control" value="${state.targetMarginPercent}" min="0" max="100" step="0.5">
+              <input type="number" id="eco-target-margin" class="form-control" value="${state.targetMarginPercent}" min="0" max="100" step="any">
               <span class="form-help">Objectif de marge sur chaque session</span>
             </div>
             <div class="form-group">
               <label for="eco-margin-alert">Seuil alerte marge (%)</label>
-              <input type="number" id="eco-margin-alert" class="form-control" value="${state.marginAlertThreshold}" min="0" max="100" step="0.5">
+              <input type="number" id="eco-margin-alert" class="form-control" value="${state.marginAlertThreshold}" min="0" max="100" step="any">
               <span class="form-help">Alerte si la marge tombe sous ce seuil</span>
             </div>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label for="eco-vat">Taux TVA (%)</label>
-              <input type="number" id="eco-vat" class="form-control" value="${state.vatRate}" min="0" max="30" step="0.1">
+              <input type="number" id="eco-vat" class="form-control" value="${state.vatRate}" min="0" max="100" step="any">
             </div>
             <div class="form-group">
               <label for="eco-est-sessions">Sessions estimées / an</label>
-              <input type="number" id="eco-est-sessions" class="form-control" value="${state.estimatedAnnualSessions}" min="1" max="1000" step="1">
+              <input type="number" id="eco-est-sessions" class="form-control" value="${state.estimatedAnnualSessions}" min="0" step="any">
               <span class="form-help">Base de répartition des coûts fixes par session</span>
             </div>
           </div>
