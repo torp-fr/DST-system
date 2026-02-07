@@ -925,6 +925,41 @@ textarea.form-control {
   .sidebar-nav .nav-item span:not(.nav-icon) { display: none; }
   .sidebar-brand .brand-text, .sidebar-brand .brand-sub { display: none; }
 }
+/* === V2 — Styles pilotage stratégique === */
+.strat-section { margin-top: 24px; }
+.strat-section-title {
+  font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--accent-red-light); margin-bottom: 12px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border-color);
+}
+.cost-breakdown { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; font-size: 0.85rem; }
+.cost-breakdown .cb-label { color: var(--text-secondary); }
+.cost-breakdown .cb-value { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.cost-breakdown .cb-total { font-weight: 700; color: var(--text-heading); border-top: 1px solid var(--border-color); padding-top: 4px; margin-top: 4px; }
+.cost-breakdown .cb-sub { padding-left: 16px; font-size: 0.8rem; color: var(--text-muted); }
+.reco-card {
+  background: var(--bg-tertiary); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 14px; margin-bottom: 10px;
+}
+.reco-card.reco-critical { border-left: 3px solid var(--accent-red); }
+.reco-card.reco-warning { border-left: 3px solid var(--color-warning); }
+.reco-card.reco-info { border-left: 3px solid var(--color-info); }
+.reco-card.reco-success { border-left: 3px solid var(--color-success); }
+.reco-card .reco-title { font-size: 0.82rem; font-weight: 600; color: var(--text-heading); margin-bottom: 4px; }
+.reco-card .reco-text { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; }
+.reco-card .reco-metric { font-family: var(--font-mono); font-weight: 700; color: var(--text-heading); }
+.floor-indicator { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; }
+.floor-ok { background: var(--color-success-bg); color: var(--color-success); }
+.floor-danger { background: var(--accent-red-bg); color: var(--accent-red-light); }
+.floor-warning { background: var(--color-warning-bg); color: var(--color-warning); }
+.prev-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.prev-cell { background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; text-align: center; }
+.prev-cell .prev-period { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.prev-cell .prev-value { font-size: 1.3rem; font-weight: 700; color: var(--text-heading); font-family: var(--font-mono); }
+.prev-cell .prev-detail { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+.trend-up { color: var(--color-success); }
+.trend-down { color: var(--accent-red-light); }
+.trend-flat { color: var(--color-warning); }
   </style>
 </head>
 <body>
@@ -1696,6 +1731,559 @@ const Engine = (() => {
 })();
 
 /* ============================================================
+   DST-SYSTEM V2 — Extensions moteur stratégique
+   Ajouts : ventilation détaillée, coût/agent/heure/module,
+   seuil plancher offre/abo, intelligence RH, prévisionnel.
+   NE REMPLACE RIEN — étend Engine existant.
+   ============================================================ */
+
+;(function enhanceEngine() {
+  'use strict';
+  const E = Engine;
+  const R = E.round2;
+
+  /* ----------------------------------------------------------
+     1. VENTILATION DÉTAILLÉE DU COÛT SESSION
+     ---------------------------------------------------------- */
+
+  /**
+   * Retourne un objet enrichi avec le détail par opérateur,
+   * par module, coût lieu, coût/agent, coût/heure, coût/module.
+   */
+  E.computeSessionCostDetailed = function(session) {
+    const base = E.computeSessionCost(session);
+    const s = DB.settings.get();
+
+    /* Détail par opérateur */
+    const operatorsDetail = [];
+    (session.operatorIds || []).forEach(opId => {
+      const op = DB.operators.getById(opId);
+      if (op) {
+        const cost = E.getOperatorDailyCost(op, s);
+        operatorsDetail.push({
+          id: op.id,
+          name: (op.firstName || '') + ' ' + (op.lastName || ''),
+          status: op.status,
+          dailyCost: R(cost)
+        });
+      }
+    });
+
+    /* Détail par module */
+    const modulesDetail = [];
+    (session.moduleIds || []).forEach(modId => {
+      const mod = DB.modules.getById(modId);
+      if (mod) {
+        modulesDetail.push({
+          id: mod.id,
+          name: mod.name || mod.label || '',
+          fixedCost: mod.fixedCost || 0,
+          variableCost: mod.variableCost || 0,
+          totalCost: R((mod.fixedCost || 0) + (mod.variableCost || 0)),
+          duration: mod.duration || 0
+        });
+      }
+    });
+
+    /* Coût lieu */
+    let locationCost = 0;
+    let locationName = '—';
+    if (session.locationId) {
+      const loc = DB.locations.getById(session.locationId);
+      if (loc) {
+        locationCost = loc.costPerSession || 0;
+        locationName = loc.name || loc.label || '—';
+      }
+    }
+
+    /* Durée totale session (somme durées modules, min 1h) */
+    const totalHours = Math.max(modulesDetail.reduce((s, m) => s + (m.duration || 0), 0), 1);
+    const nbOperators = Math.max(operatorsDetail.length, 1);
+
+    /* Coûts unitaires */
+    const costPerAgent = R(base.totalCost / nbOperators);
+    const costPerHour = R(base.totalCost / totalHours);
+    const costPerModule = modulesDetail.length > 0
+      ? R(base.totalCost / modulesDetail.length)
+      : base.totalCost;
+
+    return {
+      ...base,
+      operatorsDetail,
+      modulesDetail,
+      locationCost: R(locationCost),
+      locationName,
+      totalHours,
+      costPerAgent,
+      costPerHour,
+      costPerModule,
+      nbOperators
+    };
+  };
+
+  /* ----------------------------------------------------------
+     2. SEUIL PLANCHER ENRICHI (offre, abonnement, mutualisation)
+     ---------------------------------------------------------- */
+
+  /**
+   * Seuil plancher avancé pour offre/abonnement.
+   * Prend en compte les opérateurs moyens, la mutualisation multi-clients.
+   */
+  E.computeOfferFloorDetailed = function(offer) {
+    const s = DB.settings.get();
+    const nbSessions = Math.max(offer.nbSessions || 1, 1);
+    const nbClients = Math.max((offer.clientIds || []).length, 1);
+
+    let moduleCostPerSession = 0;
+    (offer.moduleIds || []).forEach(modId => {
+      const mod = DB.modules.getById(modId);
+      if (mod) moduleCostPerSession += (mod.fixedCost || 0) + (mod.variableCost || 0);
+    });
+
+    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      return sum + ((a.amount || 0) / Math.max(a.durationYears || 1, 1));
+    }, 0);
+    const est = Math.max(s.estimatedAnnualSessions, 1);
+    const fixedShare = (totalFixed + totalAmort) / est;
+
+    const costPerSession = moduleCostPerSession + fixedShare;
+    const totalCost = costPerSession * nbSessions;
+    const floorTotal = R(totalCost * 1.05);
+    const floorPerSession = R(floorTotal / nbSessions);
+    const floorPerClient = R(floorTotal / nbClients);
+    const pricePerSession = R((offer.price || 0) / nbSessions);
+    const pricePerClient = R((offer.price || 0) / nbClients);
+    const marginPercent = (offer.price || 0) > 0
+      ? R(((offer.price - totalCost) / offer.price) * 100)
+      : 0;
+
+    return {
+      totalCost: R(totalCost),
+      costPerSession: R(costPerSession),
+      floorTotal,
+      floorPerSession,
+      floorPerClient,
+      pricePerSession,
+      pricePerClient,
+      marginPercent,
+      isBelowFloor: (offer.price || 0) > 0 && offer.price < floorTotal,
+      nbClients,
+      nbSessions
+    };
+  };
+
+  /* ----------------------------------------------------------
+     3. INTELLIGENCE RH — Score de pertinence & recommandations
+     ---------------------------------------------------------- */
+
+  /**
+   * Calcule un score de pertinence RH et des recommandations
+   * pour chaque opérateur : bascule CDI, dépendance, projection.
+   */
+  E.computeHRIntelligence = function() {
+    const s = DB.settings.get();
+    const operators = DB.operators.getAll();
+    const allSessions = DB.sessions.getAll();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const results = [];
+
+    /* Sessions de l'année en cours, non annulées */
+    const yearSessions = allSessions.filter(sess => {
+      const d = new Date(sess.date);
+      return d.getFullYear() === currentYear && sess.status !== 'annulee';
+    });
+
+    /* Calculer les sessions des 6 derniers mois par mois */
+    const monthlyData = {};
+    for (let i = 5; i >= 0; i--) {
+      const m = new Date(currentYear, currentMonth - i, 1);
+      const key = m.getFullYear() + '-' + String(m.getMonth() + 1).padStart(2, '0');
+      monthlyData[key] = {};
+    }
+
+    allSessions.forEach(sess => {
+      if (sess.status === 'annulee') return;
+      const d = new Date(sess.date);
+      const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      if (monthlyData[key]) {
+        (sess.operatorIds || []).forEach(opId => {
+          monthlyData[key][opId] = (monthlyData[key][opId] || 0) + 1;
+        });
+      }
+    });
+
+    const monthKeys = Object.keys(monthlyData).sort();
+    const totalYearSessions = yearSessions.length;
+
+    operators.forEach(op => {
+      if (op.active === false) return;
+
+      /* Sessions annuelles de cet opérateur */
+      const opYearCount = yearSessions.filter(sess =>
+        (sess.operatorIds || []).includes(op.id)
+      ).length;
+
+      /* Charge mensuelle moyenne sur 6 mois */
+      const monthCounts = monthKeys.map(k => monthlyData[k][op.id] || 0);
+      const avgMonthly = monthCounts.length > 0
+        ? R(monthCounts.reduce((a, b) => a + b, 0) / monthCounts.length)
+        : 0;
+
+      /* Tendance (linéaire simple) */
+      let trend = 0;
+      if (monthCounts.length >= 3) {
+        const firstHalf = monthCounts.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
+        const secondHalf = monthCounts.slice(3).reduce((a, b) => a + b, 0) / Math.max(monthCounts.slice(3).length, 1);
+        trend = R(secondHalf - firstHalf);
+      }
+
+      /* Coût entreprise journalier actuel */
+      const currentCost = E.getOperatorDailyCost(op, s);
+      const currentAnnualCost = R(currentCost * opYearCount);
+
+      /* Comparer tous les statuts pour ce net */
+      const netDaily = op.costMode === 'company_max'
+        ? E.companyCostToNet(op.companyCostDaily || 0, op.status, s).net
+        : (op.netDaily || 0);
+      const comparison = E.compareAllStatuses(netDaily, s);
+
+      /* CDI : projeter quand CDI devient rentable */
+      const cdiData = comparison.find(c => c.status === 'cdi');
+      const currentData = comparison.find(c => c.status === op.status) || comparison[0];
+      let cdiBreakEvenMonths = null;
+      let cdiRecommendation = null;
+
+      if (op.status !== 'cdi' && op.status !== 'fondateur' && cdiData && currentData) {
+        const monthlySavingPerSession = currentData.companyCost - cdiData.companyCost;
+        if (monthlySavingPerSession > 0 && avgMonthly > 0) {
+          /* CDI est déjà plus rentable par session */
+          cdiBreakEvenMonths = 0;
+          cdiRecommendation = `CDI immédiatement avantageux : économie de ${E.fmt(monthlySavingPerSession)}/j, soit ~${E.fmt(R(monthlySavingPerSession * avgMonthly))}/mois`;
+        } else if (monthlySavingPerSession < 0) {
+          /* À quel volume CDI devient rentable ? Calcul seuil */
+          const cdiFixedOverhead = R(cdiData.companyCost * 22); /* ~22 jours/mois de "disponibilité" */
+          const currentMonthlyCost = R(currentData.companyCost * avgMonthly);
+          if (currentMonthlyCost > 0) {
+            const breakEvenSessions = Math.ceil(cdiFixedOverhead / currentData.companyCost);
+            if (avgMonthly > 0 && trend > 0) {
+              const monthsToBreakEven = Math.ceil((breakEvenSessions - avgMonthly) / trend);
+              cdiBreakEvenMonths = monthsToBreakEven > 0 ? monthsToBreakEven : null;
+              if (cdiBreakEvenMonths && cdiBreakEvenMonths <= 12) {
+                cdiRecommendation = `À volume croissant, CDI devient plus rentable dans ~${cdiBreakEvenMonths} mois`;
+              }
+            }
+            if (opYearCount >= s.cdiThreshold) {
+              cdiRecommendation = `${opYearCount} sessions/an atteint — passage CDI recommandé (seuil : ${s.cdiThreshold})`;
+            }
+          }
+        }
+      }
+
+      /* Dépendance */
+      const dependencyPercent = totalYearSessions > 0
+        ? R((opYearCount / totalYearSessions) * 100)
+        : 0;
+      const isDependency = dependencyPercent > 40 && totalYearSessions > 5;
+
+      /* Projection charge à +3, +6, +12 mois */
+      const proj3 = R(avgMonthly + trend * 3);
+      const proj6 = R(avgMonthly + trend * 6);
+      const proj12 = R(avgMonthly + trend * 12);
+
+      /* Score de pertinence (0-100) : coût le moins cher = 100 */
+      const cheapest = comparison[0];
+      const pertinenceScore = cheapest && currentData && currentData.companyCost > 0
+        ? R((cheapest.companyCost / currentData.companyCost) * 100)
+        : 100;
+
+      /* Recommandations compilées */
+      const recommendations = [];
+
+      if (isDependency) {
+        recommendations.push({
+          level: 'critical',
+          title: 'Dépendance critique',
+          text: `Cet opérateur assure ${dependencyPercent}% des sessions. Diversifier le vivier est urgent.`
+        });
+      }
+
+      if (cdiRecommendation) {
+        recommendations.push({
+          level: opYearCount >= s.cdiThreshold ? 'warning' : 'info',
+          title: 'Arbitrage RH',
+          text: cdiRecommendation
+        });
+      }
+
+      if (pertinenceScore < 80 && op.status !== 'fondateur') {
+        const best = comparison[0];
+        recommendations.push({
+          level: 'info',
+          title: 'Optimisation statut',
+          text: `Statut actuel (${E.statusLabel(op.status)}) coûte ${E.fmt(currentData.companyCost)}/j. Le statut ${best.label} coûterait ${E.fmt(best.companyCost)}/j (−${E.fmt(R(currentData.companyCost - best.companyCost))}).`
+        });
+      }
+
+      const overloadThreshold = s.operatorOverloadThreshold;
+      if (proj3 >= overloadThreshold || proj6 >= overloadThreshold) {
+        const when = proj3 >= overloadThreshold ? '3 mois' : '6 mois';
+        recommendations.push({
+          level: 'warning',
+          title: 'Surcharge projetée',
+          text: `Charge projetée à ${when} : ${Math.max(proj3, proj6).toFixed(0)} sess/mois (seuil : ${overloadThreshold}). Anticiper un recrutement.`
+        });
+      }
+
+      results.push({
+        operator: op,
+        opYearCount,
+        avgMonthly,
+        trend,
+        trendLabel: trend > 0.5 ? 'hausse' : trend < -0.5 ? 'baisse' : 'stable',
+        currentCost,
+        currentAnnualCost,
+        pertinenceScore,
+        comparison,
+        cdiBreakEvenMonths,
+        dependencyPercent,
+        isDependency,
+        proj3: Math.max(proj3, 0),
+        proj6: Math.max(proj6, 0),
+        proj12: Math.max(proj12, 0),
+        recommendations,
+        monthCounts
+      });
+    });
+
+    return results.sort((a, b) => b.opYearCount - a.opYearCount);
+  };
+
+  /* ----------------------------------------------------------
+     4. ALERTES OFFRES / ABONNEMENTS
+     ---------------------------------------------------------- */
+
+  /**
+   * Alertes avancées pour offres et abonnements.
+   */
+  E.computeOfferAlerts = function() {
+    const alerts = [];
+    const offers = DB.offers.getAll();
+    const now = new Date();
+
+    offers.forEach(offer => {
+      if (offer.active === false) return;
+
+      /* Fin d'abonnement imminente (< 30 jours) */
+      if (offer.endDate) {
+        const end = new Date(offer.endDate);
+        const daysLeft = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+        if (daysLeft <= 30 && daysLeft > 0) {
+          alerts.push({
+            level: 'warning',
+            context: 'Abonnement',
+            offerId: offer.id,
+            message: `"${offer.label}" expire dans ${daysLeft} jour(s) — penser au renouvellement.`
+          });
+        } else if (daysLeft <= 0) {
+          alerts.push({
+            level: 'critical',
+            context: 'Abonnement expiré',
+            offerId: offer.id,
+            message: `"${offer.label}" a expiré le ${end.toLocaleDateString('fr-FR')}.`
+          });
+        }
+      }
+
+      /* Sessions restantes faibles (abonnement) */
+      if (offer.type === 'abonnement' && offer.nbSessions > 0) {
+        const consumed = offer.sessionsConsumed || 0;
+        const remaining = offer.nbSessions - consumed;
+        if (remaining <= 2 && remaining > 0) {
+          alerts.push({
+            level: 'warning',
+            context: 'Consommation abonnement',
+            offerId: offer.id,
+            message: `"${offer.label}" : seulement ${remaining} session(s) restante(s) sur ${offer.nbSessions}.`
+          });
+        } else if (remaining <= 0) {
+          alerts.push({
+            level: 'critical',
+            context: 'Abonnement épuisé',
+            offerId: offer.id,
+            message: `"${offer.label}" : toutes les sessions ont été consommées (${consumed}/${offer.nbSessions}).`
+          });
+        }
+      }
+
+      /* Offre structurellement déficitaire */
+      const floor = E.computeOfferFloorDetailed(offer);
+      if (floor.isBelowFloor) {
+        alerts.push({
+          level: 'critical',
+          context: 'Offre déficitaire',
+          offerId: offer.id,
+          message: `"${offer.label}" : prix (${E.fmt(offer.price)}) sous le seuil plancher (${E.fmt(floor.floorTotal)}). Marge : ${floor.marginPercent}%.`
+        });
+      }
+    });
+
+    return alerts;
+  };
+
+  /* ----------------------------------------------------------
+     5. PRÉVISIONNEL — Projection tendancielle
+     ---------------------------------------------------------- */
+
+  /**
+   * Projections à 3, 6, 12 mois basées sur les tendances des 6 derniers mois.
+   */
+  E.computeForecasts = function() {
+    const s = DB.settings.get();
+    const allSessions = DB.sessions.getAll();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    /* Volume mensuel sur les 6 derniers mois */
+    const monthlyVolume = [];
+    const monthlyRevenue = [];
+    const monthlyCost = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const m = new Date(currentYear, currentMonth - i, 1);
+      const mEnd = new Date(currentYear, currentMonth - i + 1, 0);
+      const month = m.getMonth();
+      const year = m.getFullYear();
+
+      const monthSessions = allSessions.filter(sess => {
+        if (sess.status === 'annulee') return false;
+        const d = new Date(sess.date);
+        return d.getMonth() === month && d.getFullYear() === year;
+      });
+
+      let rev = 0, cost = 0;
+      monthSessions.forEach(sess => {
+        rev += (sess.price || 0);
+        cost += E.computeSessionCost(sess).totalCost;
+      });
+
+      const label = m.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' });
+      monthlyVolume.push({ label, count: monthSessions.length });
+      monthlyRevenue.push({ label, amount: R(rev) });
+      monthlyCost.push({ label, amount: R(cost) });
+    }
+
+    /* Tendances linéaires */
+    function linearTrend(values) {
+      const n = values.length;
+      if (n < 2) return 0;
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+      values.forEach((v, i) => {
+        sumX += i; sumY += v; sumXY += i * v; sumXX += i * i;
+      });
+      const denom = n * sumXX - sumX * sumX;
+      return denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
+    }
+
+    const volumeValues = monthlyVolume.map(m => m.count);
+    const revenueValues = monthlyRevenue.map(m => m.amount);
+    const costValues = monthlyCost.map(m => m.amount);
+
+    const volumeTrend = linearTrend(volumeValues);
+    const revenueTrend = linearTrend(revenueValues);
+
+    const avgVolume = volumeValues.reduce((a, b) => a + b, 0) / volumeValues.length || 0;
+    const avgRevenue = revenueValues.reduce((a, b) => a + b, 0) / revenueValues.length || 0;
+    const avgCost = costValues.reduce((a, b) => a + b, 0) / costValues.length || 0;
+    const avgMargin = avgRevenue > 0 ? R(((avgRevenue - avgCost) / avgRevenue) * 100) : 0;
+
+    /* Projections */
+    function project(base, trend, months) {
+      return Math.max(R(base + trend * months), 0);
+    }
+
+    const projections = {
+      volume: {
+        m3: project(avgVolume, volumeTrend, 3),
+        m6: project(avgVolume, volumeTrend, 6),
+        m12: project(avgVolume, volumeTrend, 12)
+      },
+      revenue: {
+        m3: project(avgRevenue, revenueTrend, 3),
+        m6: project(avgRevenue, revenueTrend, 6),
+        m12: project(avgRevenue, revenueTrend, 12)
+      },
+      margin: {
+        current: avgMargin,
+        trend: revenueTrend > 0 ? 'hausse' : revenueTrend < 0 ? 'baisse' : 'stable'
+      }
+    };
+
+    /* HR : charge projetée et seuil de recrutement */
+    const operators = DB.operators.getAll().filter(o => o.active !== false);
+    const capaciteTotale = operators.length * s.operatorOverloadThreshold;
+    const chargeActuelle = avgVolume;
+
+    let recruitmentNeeded = null;
+    if (projections.volume.m6 > capaciteTotale && operators.length > 0) {
+      const shortfall = Math.ceil(projections.volume.m6 / s.operatorOverloadThreshold) - operators.length;
+      recruitmentNeeded = {
+        horizon: '6 mois',
+        count: shortfall,
+        message: `Recrutement de ${shortfall} opérateur(s) recommandé sous 6 mois pour absorber la charge projetée.`
+      };
+    } else if (projections.volume.m12 > capaciteTotale && operators.length > 0) {
+      const shortfall = Math.ceil(projections.volume.m12 / s.operatorOverloadThreshold) - operators.length;
+      recruitmentNeeded = {
+        horizon: '12 mois',
+        count: shortfall,
+        message: `Recrutement de ${shortfall} opérateur(s) à prévoir sous 12 mois.`
+      };
+    }
+
+    /* Statut recommandé pour un recrutement */
+    let recruitmentStatus = null;
+    if (recruitmentNeeded) {
+      const testNet = 200; /* net journalier estimé pour comparaison */
+      const comp = E.compareAllStatuses(testNet, s);
+      recruitmentStatus = comp[0]; /* Le moins cher */
+    }
+
+    return {
+      monthlyVolume,
+      monthlyRevenue,
+      monthlyCost,
+      avgVolume: R(avgVolume),
+      avgRevenue: R(avgRevenue),
+      avgCost: R(avgCost),
+      avgMargin,
+      volumeTrend: R(volumeTrend),
+      revenueTrend: R(revenueTrend),
+      projections,
+      capaciteTotale,
+      chargeActuelle: R(chargeActuelle),
+      recruitmentNeeded,
+      recruitmentStatus,
+      trendLabel: volumeTrend > 0.3 ? 'hausse' : volumeTrend < -0.3 ? 'baisse' : 'stable'
+    };
+  };
+
+  /* ----------------------------------------------------------
+     6. EXTENSION computeAllAlerts — ajouter alertes V2
+     ---------------------------------------------------------- */
+  const _originalAlerts = E.computeAllAlerts;
+  E.computeAllAlerts = function() {
+    const base = _originalAlerts.call(E);
+    const offerAlerts = E.computeOfferAlerts();
+    return base.concat(offerAlerts);
+  };
+
+})();
+
+/* ============================================================
    DST-SYSTEM — Vue Tableau de Bord (Dashboard)
    Poste de commandement stratégique pour le dirigeant.
    Synthèse économique, alertes, sessions, charge opérateurs.
@@ -2131,7 +2719,170 @@ Views.Dashboard = {
     }
 
     /* ----------------------------------------------------------
-       7. ASSEMBLAGE FINAL
+       7. VUE PRÉVISIONNELLE (V2)
+       ---------------------------------------------------------- */
+
+    function buildForecastHTML() {
+      try {
+        const fc = Engine.computeForecasts();
+        const trendIcon = fc.trendLabel === 'hausse' ? '&#x25B2;' : fc.trendLabel === 'baisse' ? '&#x25BC;' : '&#x25CF;';
+        const trendClass = fc.trendLabel === 'hausse' ? 'trend-up' : fc.trendLabel === 'baisse' ? 'trend-down' : 'trend-flat';
+
+        /* Historique volume mensuel (mini-table texte) */
+        let histHTML = fc.monthlyVolume.map(m =>
+          `<span style="display:inline-block;text-align:center;min-width:55px;"><span class="text-muted" style="font-size:0.68rem;display:block;">${m.label}</span><span class="font-bold">${m.count}</span></span>`
+        ).join('');
+
+        /* Recommandation recrutement */
+        let recruitHTML = '';
+        if (fc.recruitmentNeeded) {
+          recruitHTML = `
+            <div class="reco-card reco-warning">
+              <div class="reco-title">Seuil de recrutement</div>
+              <div class="reco-text">${escapeHTML(fc.recruitmentNeeded.message)}${fc.recruitmentStatus ? ` Statut recommandé : <strong>${fc.recruitmentStatus.label}</strong> (${Engine.fmt(fc.recruitmentStatus.companyCost)}/j).` : ''}</div>
+            </div>`;
+        }
+
+        return `
+          <div class="card strat-section">
+            <div class="strat-section-title">Anticipation — si tendance actuelle maintenue</div>
+            <div class="flex gap-8 mb-16" style="flex-wrap:wrap;align-items:center;">
+              <span class="text-muted" style="font-size:0.82rem;">Tendance globale :</span>
+              <span class="${trendClass} font-bold">${trendIcon} ${fc.trendLabel}</span>
+              <span class="text-muted" style="font-size:0.82rem;margin-left:16px;">Moy. mensuelle :</span>
+              <span class="font-bold">${fc.avgVolume} sess</span>
+              <span class="text-muted" style="font-size:0.82rem;margin-left:16px;">CA moy :</span>
+              <span class="font-bold text-mono">${Engine.fmt(fc.avgRevenue)}</span>
+            </div>
+
+            <div class="mb-16" style="font-size:0.82rem;color:var(--text-secondary);">
+              Volume des 6 derniers mois : ${histHTML}
+            </div>
+
+            <div class="prev-grid mb-16">
+              <div class="prev-cell">
+                <div class="prev-period">+3 mois</div>
+                <div class="prev-value">${fc.projections.volume.m3.toFixed(0)}</div>
+                <div class="prev-detail">sess/mois</div>
+              </div>
+              <div class="prev-cell">
+                <div class="prev-period">+6 mois</div>
+                <div class="prev-value">${fc.projections.volume.m6.toFixed(0)}</div>
+                <div class="prev-detail">sess/mois</div>
+              </div>
+              <div class="prev-cell">
+                <div class="prev-period">+12 mois</div>
+                <div class="prev-value">${fc.projections.volume.m12.toFixed(0)}</div>
+                <div class="prev-detail">sess/mois</div>
+              </div>
+            </div>
+
+            <div class="prev-grid mb-16">
+              <div class="prev-cell">
+                <div class="prev-period">CA +3 mois</div>
+                <div class="prev-value" style="font-size:1rem;">${Engine.fmt(fc.projections.revenue.m3)}</div>
+                <div class="prev-detail">/mois projeté</div>
+              </div>
+              <div class="prev-cell">
+                <div class="prev-period">CA +6 mois</div>
+                <div class="prev-value" style="font-size:1rem;">${Engine.fmt(fc.projections.revenue.m6)}</div>
+                <div class="prev-detail">/mois projeté</div>
+              </div>
+              <div class="prev-cell">
+                <div class="prev-period">Marge actuelle</div>
+                <div class="prev-value ${fc.avgMargin >= settings.targetMarginPercent ? 'text-green' : fc.avgMargin >= settings.marginAlertThreshold ? 'text-yellow' : 'text-red'}">${Engine.fmtPercent(fc.avgMargin)}</div>
+                <div class="prev-detail">tendance ${fc.projections.margin.trend}</div>
+              </div>
+            </div>
+
+            <div class="mb-8" style="font-size:0.82rem;">
+              <span class="text-muted">Capacité RH totale :</span>
+              <span class="font-bold">${fc.capaciteTotale} sess/mois</span>
+              <span class="text-muted" style="margin-left:16px;">Charge actuelle :</span>
+              <span class="font-bold">${fc.chargeActuelle} sess/mois</span>
+              <span class="text-muted" style="margin-left:8px;">(${fc.capaciteTotale > 0 ? Engine.round2((fc.chargeActuelle / fc.capaciteTotale) * 100) : 0}%)</span>
+            </div>
+            ${recruitHTML}
+          </div>
+        `;
+      } catch(e) { return ''; }
+    }
+
+    /* ----------------------------------------------------------
+       8. RECOMMANDATIONS RH STRATÉGIQUES (V2)
+       ---------------------------------------------------------- */
+
+    function buildHRIntelligenceHTML() {
+      try {
+        const hrData = Engine.computeHRIntelligence();
+        if (hrData.length === 0) return '';
+
+        /* Ne montrer que les opérateurs avec des recommandations */
+        const withRecos = hrData.filter(h => h.recommendations.length > 0);
+        if (withRecos.length === 0) {
+          return `
+            <div class="card strat-section">
+              <div class="strat-section-title">Intelligence RH</div>
+              <div class="alert alert-success"><span class="alert-icon">&#10003;</span> Aucune recommandation — vivier RH optimal.</div>
+            </div>`;
+        }
+
+        let inner = '';
+        withRecos.slice(0, 5).forEach(h => {
+          const op = h.operator;
+          inner += `<div style="margin-bottom:16px;">`;
+          inner += `<div class="flex-between mb-8">
+            <div>
+              <span class="font-bold">${escapeHTML((op.firstName || '') + ' ' + (op.lastName || ''))}</span>
+              <span class="tag tag-neutral" style="margin-left:8px;">${Engine.statusLabel(op.status)}</span>
+            </div>
+            <div class="text-mono text-muted" style="font-size:0.8rem;">
+              Score : <span class="font-bold ${h.pertinenceScore >= 90 ? 'text-green' : h.pertinenceScore >= 70 ? 'text-yellow' : 'text-red'}">${h.pertinenceScore}/100</span>
+              &nbsp;|&nbsp; ${h.opYearCount} sess/an &nbsp;|&nbsp; ~${h.avgMonthly}/mois
+            </div>
+          </div>`;
+
+          /* Projection charge */
+          inner += `<div class="prev-grid mb-8">
+            <div class="prev-cell" style="padding:8px;">
+              <div class="prev-period">+3 mois</div>
+              <div class="prev-value" style="font-size:1rem;">${h.proj3.toFixed(1)}</div>
+              <div class="prev-detail">sess/mois</div>
+            </div>
+            <div class="prev-cell" style="padding:8px;">
+              <div class="prev-period">+6 mois</div>
+              <div class="prev-value" style="font-size:1rem;">${h.proj6.toFixed(1)}</div>
+              <div class="prev-detail">sess/mois</div>
+            </div>
+            <div class="prev-cell" style="padding:8px;">
+              <div class="prev-period">+12 mois</div>
+              <div class="prev-value" style="font-size:1rem;">${h.proj12.toFixed(1)}</div>
+              <div class="prev-detail">sess/mois</div>
+            </div>
+          </div>`;
+
+          h.recommendations.forEach(r => {
+            const cls = r.level === 'critical' ? 'reco-critical' : r.level === 'warning' ? 'reco-warning' : r.level === 'success' ? 'reco-success' : 'reco-info';
+            inner += `<div class="reco-card ${cls}">
+              <div class="reco-title">${escapeHTML(r.title)}</div>
+              <div class="reco-text">${r.text}</div>
+            </div>`;
+          });
+
+          inner += `</div>`;
+        });
+
+        return `
+          <div class="card strat-section">
+            <div class="strat-section-title">Intelligence RH — Recommandations</div>
+            ${inner}
+          </div>
+        `;
+      } catch(e) { return ''; }
+    }
+
+    /* ----------------------------------------------------------
+       9. ASSEMBLAGE FINAL (V2 — enrichi)
        ---------------------------------------------------------- */
 
     const today = now.toLocaleDateString('fr-FR', {
@@ -2152,6 +2903,9 @@ Views.Dashboard = {
       <!-- Alertes intelligentes -->
       ${buildAlertsHTML()}
 
+      <!-- Vue prévisionnelle -->
+      ${buildForecastHTML()}
+
       <!-- Prochaines sessions + Synthèse économique -->
       <div class="grid-2">
         <div>
@@ -2162,6 +2916,9 @@ Views.Dashboard = {
           ${buildOperatorLoadHTML()}
         </div>
       </div>
+
+      <!-- Intelligence RH -->
+      ${buildHRIntelligenceHTML()}
     `;
   }
 };
