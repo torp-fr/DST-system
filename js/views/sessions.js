@@ -520,7 +520,7 @@ Views.Sessions = {
           </div>
           <div class="form-group" style="margin-bottom:0">
             ${i === 0 ? '<label>Montant</label>' : ''}
-            <input type="number" class="form-control vc-amount" value="${vc.amount || 0}" min="0" step="0.01">
+            <input type="number" class="form-control vc-amount" value="${vc.amount || 0}" min="0" step="any">
           </div>
           <div style="padding-bottom:2px">
             <button type="button" class="btn btn-sm vc-remove" data-idx="${i}" title="Retirer">&times;</button>
@@ -675,7 +675,7 @@ Views.Sessions = {
                   <div class="form-group">
                     <label for="sess-price">Prix facturé (EUR)</label>
                     <input type="number" id="sess-price" class="form-control"
-                           value="${data.price || 0}" min="0" step="0.01">
+                           value="${data.price || 0}" min="0" step="any">
                   </div>
 
                   <!-- Lieu -->

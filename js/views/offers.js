@@ -445,7 +445,7 @@ Views.Offers = {
               <div class="form-row">
                 <div class="form-group">
                   <label for="offer-price">Prix total (EUR) *</label>
-                  <input type="number" id="offer-price" class="form-control" min="0" step="0.01"
+                  <input type="number" id="offer-price" class="form-control" min="0" step="any"
                          value="${data.price}">
                   <span class="form-help" id="floor-hint"></span>
                 </div>
@@ -463,7 +463,7 @@ Views.Offers = {
                 <div class="form-row">
                   <div class="form-group">
                     <label for="offer-nb-sessions">Nombre de sessions</label>
-                    <input type="number" id="offer-nb-sessions" class="form-control" min="0" step="1"
+                    <input type="number" id="offer-nb-sessions" class="form-control" min="0" step="any"
                            value="${data.nbSessions}">
                   </div>
                   <div class="form-group">
@@ -475,7 +475,7 @@ Views.Offers = {
                   ${isEdit ? `
                   <div class="form-group">
                     <label for="offer-sessions-consumed">Sessions consomm\u00e9es</label>
-                    <input type="number" id="offer-sessions-consumed" class="form-control" min="0" step="1"
+                    <input type="number" id="offer-sessions-consumed" class="form-control" min="0" step="any"
                            value="${data.sessionsConsumed}">
                   </div>` : ''}
                 </div>

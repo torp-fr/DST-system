@@ -272,7 +272,7 @@ Views.Modules = {
                 <div class="form-group">
                   <label for="mod-operators">Opérateurs requis</label>
                   <input type="number" id="mod-operators" class="form-control"
-                         min="1" step="1"
+                         min="1" step="any"
                          value="${m.requiredOperators || 1}"
                          placeholder="1" />
                   <div class="form-help">Nombre minimum d'opérateurs pour animer ce module.</div>
@@ -280,7 +280,7 @@ Views.Modules = {
                 <div class="form-group">
                   <label for="mod-duration">Durée (heures)</label>
                   <input type="number" id="mod-duration" class="form-control"
-                         min="0.5" step="0.5"
+                         min="0.5" step="any"
                          value="${m.duration || ''}"
                          placeholder="Ex : 4" />
                 </div>
@@ -302,7 +302,7 @@ Views.Modules = {
                   <div class="form-group">
                     <label for="mod-fixed-cost">Coût fixe par session</label>
                     <input type="number" id="mod-fixed-cost" class="form-control"
-                           min="0" step="0.01"
+                           min="0" step="any"
                            value="${m.fixedCost || 0}"
                            placeholder="0" />
                     <div class="form-help">Ajouté systématiquement à chaque session.</div>
@@ -310,7 +310,7 @@ Views.Modules = {
                   <div class="form-group">
                     <label for="mod-var-cost">Coût variable par session</label>
                     <input type="number" id="mod-var-cost" class="form-control"
-                           min="0" step="0.01"
+                           min="0" step="any"
                            value="${m.variableCost || 0}"
                            placeholder="0" />
                     <div class="form-help">Consommables, munitions, usure matériel...</div>

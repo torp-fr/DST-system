@@ -198,7 +198,7 @@ Views.Locations = {
                 <div class="form-group">
                   <label for="loc-cost">Coût par session</label>
                   <input type="number" id="loc-cost" name="costPerSession" class="form-control"
-                         value="${data.costPerSession != null ? data.costPerSession : ''}" min="0" step="0.01"
+                         value="${data.costPerSession != null ? data.costPerSession : ''}" min="0" step="any"
                          placeholder="0 si propriétaire">
                   <span class="form-help">0 si lieu détenu en propre</span>
                 </div>
