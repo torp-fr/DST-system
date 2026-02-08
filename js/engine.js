@@ -7,52 +7,385 @@ const Engine = (() => {
   'use strict';
 
   /* ----------------------------------------------------------
-     CALCULS RH — Bidirectionnel
+     CALCULS RH — Barème détaillé des charges sociales françaises
+     ---------------------------------------------------------- */
+
+  /**
+   * Récupère la configuration des charges depuis les paramètres.
+   * Retourne le barème par défaut si absent.
+   */
+  function getChargesConfig(settings) {
+    const s = settings || DB.settings.get();
+    return s.chargesConfig || DB.settings.getDefaults().chargesConfig;
+  }
+
+  /**
+   * Calcule le détail ligne par ligne des charges patronales et salariales
+   * pour un brut annuel donné (salarié CDI / CDD / contrat journalier).
+   *
+   * @param {number} brutAnnuel — salaire brut annuel
+   * @param {object} cc — chargesConfig
+   * @returns {object} { patronales: [...], salariales: [...], totaux: {...} }
+   */
+  function computeChargesDetaillees(brutAnnuel, cc) {
+    const passAnnuel  = cc.passAnnuel || 47100;
+    const smicAnnuel  = (cc.smicMensuelBrut || 1801.80) * 12;
+    const effectif    = cc.effectif || 'moins11';
+
+    // Bases plafonnées
+    const baseT1 = Math.min(brutAnnuel, passAnnuel);
+    const baseT2 = Math.max(brutAnnuel - passAnnuel, 0);
+    const ratioSmic = smicAnnuel > 0 ? brutAnnuel / smicAnnuel : 99;
+
+    const detailPatronales = [];
+    let totalPatronales = 0;
+
+    // --- Charges patronales ---
+    (cc.patronales || []).forEach(function(def) {
+      let taux = def.taux || 0;
+      let base = brutAnnuel;
+      let note = '';
+
+      // Taux réduit si sous seuil SMIC
+      if (def.tauxReduit !== undefined && def.seuilSmic) {
+        if (ratioSmic <= def.seuilSmic) {
+          taux = def.tauxReduit;
+          note = 'Taux réduit (≤' + def.seuilSmic + ' SMIC)';
+        }
+      }
+
+      // FNAL : taux différent si ≥50 salariés
+      if (def.code === 'fnal' && effectif === '50etplus') {
+        taux = 0.50;
+        note = 'Taux ≥50 salariés';
+      }
+
+      // Formation pro : taux différent si ≥11 salariés
+      if (def.code === 'formationPro' && effectif !== 'moins11') {
+        taux = 1.00;
+        note = 'Taux ≥11 salariés';
+      }
+
+      // Plafonnement
+      if (def.plafonnee) {
+        base = baseT1;
+        if (!note) note = 'Plafonné au PASS';
+      } else if (def.tranche2) {
+        base = baseT2;
+        if (base === 0) note = 'N/A (brut ≤ PASS)';
+        else note = note || 'Tranche 2 (au-delà du PASS)';
+      }
+
+      var montant = round2(base * taux / 100);
+      totalPatronales += montant;
+
+      detailPatronales.push({
+        code: def.code, label: def.label, taux: taux,
+        base: round2(base), montant: montant, note: note
+      });
+    });
+
+    // --- Charges salariales ---
+    const detailSalariales = [];
+    let totalSalariales = 0;
+
+    (cc.salariales || []).forEach(function(def) {
+      var base = brutAnnuel;
+      var note = '';
+
+      if (def.assiette9825) {
+        base = round2(brutAnnuel * 0.9825);
+        note = 'Assiette 98,25% du brut';
+      } else if (def.plafonnee) {
+        base = baseT1;
+        note = 'Plafonné au PASS';
+      } else if (def.tranche2) {
+        base = baseT2;
+        if (base === 0) note = 'N/A (brut ≤ PASS)';
+        else note = 'Tranche 2 (au-delà du PASS)';
+      }
+
+      var montant = round2(base * (def.taux || 0) / 100);
+      totalSalariales += montant;
+
+      detailSalariales.push({
+        code: def.code, label: def.label, taux: def.taux || 0,
+        base: round2(base), montant: montant, note: note
+      });
+    });
+
+    var netAnnuel = round2(brutAnnuel - totalSalariales);
+    var coutEntreprise = round2(brutAnnuel + totalPatronales);
+
+    return {
+      patronales: detailPatronales,
+      salariales: detailSalariales,
+      totaux: {
+        brutAnnuel: round2(brutAnnuel),
+        chargesPatronales: round2(totalPatronales),
+        chargesSalariales: round2(totalSalariales),
+        netAnnuel: netAnnuel,
+        coutEntreprise: coutEntreprise,
+        tauxPatronalesEffectif: brutAnnuel > 0 ? round2(totalPatronales / brutAnnuel * 100) : 0,
+        tauxSalarialesEffectif: brutAnnuel > 0 ? round2(totalSalariales / brutAnnuel * 100) : 0
+      }
+    };
+  }
+
+  /**
+   * Calcul itératif : net annuel → brut annuel (salarié).
+   * Inverse de brut - chargesSalariales = net, résolu par convergence.
+   *
+   * @param {number} netAnnuel — salaire net annuel cible
+   * @param {object} cc — chargesConfig
+   * @returns {number} brut annuel
+   */
+  function netToBrutIteratif(netAnnuel, cc) {
+    // Estimation initiale : net / (1 - ~22% charges salariales moyennes)
+    var brut = netAnnuel / 0.78;
+    for (var i = 0; i < 25; i++) {
+      var detail = computeChargesDetaillees(brut, cc);
+      var computedNet = detail.totaux.netAnnuel;
+      var diff = netAnnuel - computedNet;
+      if (Math.abs(diff) < 0.50) break;
+      brut += diff;
+      if (brut < 0) brut = 0;
+    }
+    return round2(brut);
+  }
+
+  /**
+   * Calcul itératif : coût entreprise annuel → brut annuel (salarié).
+   * Inverse de brut + chargesPatronales = coût, résolu par convergence.
+   *
+   * @param {number} coutAnnuel — coût entreprise annuel cible
+   * @param {object} cc — chargesConfig
+   * @returns {number} brut annuel
+   */
+  function coutEntrepriseToBrutIteratif(coutAnnuel, cc) {
+    // Estimation initiale : coût / (1 + ~42% charges patronales moyennes)
+    var brut = coutAnnuel / 1.42;
+    for (var i = 0; i < 25; i++) {
+      var detail = computeChargesDetaillees(brut, cc);
+      var computedCout = detail.totaux.coutEntreprise;
+      var diff = coutAnnuel - computedCout;
+      if (Math.abs(diff) < 0.50) break;
+      brut += diff * 0.7; // facteur d'amortissement pour stabilité
+      if (brut < 0) brut = 0;
+    }
+    return round2(brut);
+  }
+
+  /**
+   * Calcul complet du coût pour un statut donné, avec ventilation détaillée.
+   *
+   * @param {number} netJournalier — net souhaité par jour
+   * @param {string} status — statut contractuel
+   * @param {object} settings — paramètres complets
+   * @returns {object} résultat avec ventilation
+   */
+  function computeCoutComplet(netJournalier, status, settings) {
+    var s = settings || DB.settings.get();
+    var cc = getChargesConfig(s);
+    var joursAn = cc.joursOuvresAn || 218;
+
+    switch (status) {
+
+      case 'cdi':
+      case 'contrat_journalier': {
+        var netAnnuel = netJournalier * joursAn;
+        var brutAnnuel = netToBrutIteratif(netAnnuel, cc);
+        var details = computeChargesDetaillees(brutAnnuel, cc);
+        return {
+          status: status,
+          netJournalier: round2(details.totaux.netAnnuel / joursAn),
+          brutJournalier: round2(brutAnnuel / joursAn),
+          chargesPatronalesJour: round2(details.totaux.chargesPatronales / joursAn),
+          chargesSalarialesJour: round2(details.totaux.chargesSalariales / joursAn),
+          coutEntrepriseJour: round2(details.totaux.coutEntreprise / joursAn),
+          tauxPatronalesEffectif: details.totaux.tauxPatronalesEffectif,
+          tauxSalarialesEffectif: details.totaux.tauxSalarialesEffectif,
+          annuel: details.totaux,
+          details: details
+        };
+      }
+
+      case 'cdd': {
+        var netAnnuelCDD = netJournalier * joursAn;
+        var brutBaseCDD = netToBrutIteratif(netAnnuelCDD, cc);
+        // Prime précarité sur brut de base
+        var txPrecarite = (cc.cdd && cc.cdd.primePrecarite) || 10;
+        var txCP = (cc.cdd && cc.cdd.indemniteCP) || 10;
+        var primePrecarite = round2(brutBaseCDD * txPrecarite / 100);
+        var indemniteCP = round2((brutBaseCDD + primePrecarite) * txCP / 100);
+        // Brut total chargeable
+        var brutTotalCDD = brutBaseCDD + primePrecarite + indemniteCP;
+        var detailsCDD = computeChargesDetaillees(brutTotalCDD, cc);
+        return {
+          status: 'cdd',
+          netJournalier: round2(netJournalier),
+          brutBaseJour: round2(brutBaseCDD / joursAn),
+          primePrecariteJour: round2(primePrecarite / joursAn),
+          indemniteCP_Jour: round2(indemniteCP / joursAn),
+          brutTotalJour: round2(brutTotalCDD / joursAn),
+          chargesPatronalesJour: round2(detailsCDD.totaux.chargesPatronales / joursAn),
+          chargesSalarialesJour: round2(detailsCDD.totaux.chargesSalariales / joursAn),
+          coutEntrepriseJour: round2(detailsCDD.totaux.coutEntreprise / joursAn),
+          tauxPatronalesEffectif: detailsCDD.totaux.tauxPatronalesEffectif,
+          majorationCDD: round2((primePrecarite + indemniteCP) / joursAn),
+          annuel: {
+            brutBase: round2(brutBaseCDD),
+            primePrecarite: primePrecarite,
+            indemniteCP: indemniteCP,
+            brutTotal: round2(brutTotalCDD),
+            chargesPatronales: detailsCDD.totaux.chargesPatronales,
+            chargesSalariales: detailsCDD.totaux.chargesSalariales,
+            coutEntreprise: detailsCDD.totaux.coutEntreprise
+          },
+          details: detailsCDD
+        };
+      }
+
+      case 'interim': {
+        // L'entreprise paie la facture de l'agence d'intérim
+        // L'agence facture : brut × coefficient (qui couvre salaire + charges + marge agence)
+        var netAnnuelInt = netJournalier * joursAn;
+        var brutBaseInt = netToBrutIteratif(netAnnuelInt, cc);
+        var coeffAgence = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        var factureAgenceAn = round2(brutBaseInt * coeffAgence);
+        // Détail indicatif : ce que l'agence supporte
+        var detailsInt = computeChargesDetaillees(brutBaseInt, cc);
+        return {
+          status: 'interim',
+          netJournalier: round2(netJournalier),
+          brutJournalier: round2(brutBaseInt / joursAn),
+          coefficientAgence: coeffAgence,
+          factureAgenceJour: round2(factureAgenceAn / joursAn),
+          coutEntrepriseJour: round2(factureAgenceAn / joursAn),
+          chargesEstimeesAgence: round2(detailsInt.totaux.chargesPatronales / joursAn),
+          margeAgenceEstimee: round2((factureAgenceAn - detailsInt.totaux.coutEntreprise) / joursAn),
+          annuel: {
+            brutBase: round2(brutBaseInt),
+            factureAgence: factureAgenceAn,
+            coutEntreprise: factureAgenceAn
+          },
+          details: detailsInt
+        };
+      }
+
+      case 'freelance': {
+        // Freelance/auto-entrepreneur : facture HT = net / (1 - taux charges AE)
+        var tauxAE = (cc.freelance && cc.freelance.tauxCharges) || 21.1;
+        var factureHT = round2(netJournalier / (1 - tauxAE / 100));
+        return {
+          status: 'freelance',
+          netJournalier: round2(netJournalier),
+          factureHT_Jour: factureHT,
+          chargesAutoEntrepreneur: round2(factureHT * tauxAE / 100),
+          tauxChargesAE: tauxAE,
+          coutEntrepriseJour: factureHT,
+          annuel: {
+            factureHT: round2(factureHT * joursAn),
+            coutEntreprise: round2(factureHT * joursAn)
+          },
+          details: null // Pas de charges patronales pour l'entreprise
+        };
+      }
+
+      case 'fondateur': {
+        // Fondateur : coût 0 pour les sessions (rémunération = charge fixe)
+        // Mais on peut calculer le coût réel TNS si demandé
+        var regimeFond = (cc.fondateur && cc.fondateur.regime) || 'tns';
+        if (regimeFond === 'assimileSalarie') {
+          var resultAS = computeCoutComplet(netJournalier, 'cdi', s);
+          resultAS.status = 'fondateur';
+          resultAS.regime = 'assimileSalarie';
+          resultAS.coutSessionJour = 0; // Pas imputé aux sessions
+          return resultAS;
+        }
+        var tauxTNS = (cc.fondateur && cc.fondateur.tauxTNS) || 45;
+        var cotisationsTNS = round2(netJournalier * tauxTNS / 100);
+        return {
+          status: 'fondateur',
+          regime: 'tns',
+          netJournalier: round2(netJournalier),
+          cotisationsTNS_Jour: cotisationsTNS,
+          coutReelJour: round2(netJournalier + cotisationsTNS),
+          coutEntrepriseJour: 0, // Non imputé aux sessions
+          coutSessionJour: 0,
+          tauxTNS: tauxTNS,
+          annuel: {
+            netAnnuel: round2(netJournalier * joursAn),
+            cotisationsTNS: round2(cotisationsTNS * joursAn),
+            coutReel: round2((netJournalier + cotisationsTNS) * joursAn)
+          },
+          details: null
+        };
+      }
+
+      default:
+        return {
+          status: status, netJournalier: netJournalier,
+          coutEntrepriseJour: netJournalier,
+          details: null
+        };
+    }
+  }
+
+  /* ----------------------------------------------------------
+     FONCTIONS PUBLIQUES EXISTANTES — Rétrocompatibles
+     Utilisent maintenant le calcul détaillé en interne.
      ---------------------------------------------------------- */
 
   /**
    * Calcul du coût entreprise à partir du net souhaité par l'opérateur.
-   * net → brut → brut + charges patronales = coût entreprise
+   * Interface inchangée : retourne { net, gross, charges, companyCost }
+   * + propriété « detailComplet » avec la ventilation complète.
    */
   function netToCompanyCost(netDaily, status, settings) {
-    const s = settings || DB.settings.get();
+    var s = settings || DB.settings.get();
+    var complet = computeCoutComplet(netDaily, status, s);
+
+    // Adapter au format historique { net, gross, charges, companyCost }
     switch (status) {
-      case 'freelance': {
-        // Freelance : facture TTC, le net est son prix HT
-        // Le coût entreprise = net + charges estimées freelance
-        const rate = s.freelanceChargeRate / 100;
+      case 'freelance':
         return {
           net: netDaily,
-          gross: netDaily / (1 - rate),
-          charges: (netDaily / (1 - rate)) - netDaily,
-          companyCost: netDaily / (1 - rate)
+          gross: complet.factureHT_Jour,
+          charges: complet.chargesAutoEntrepreneur,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
         };
-      }
-      case 'interim': {
-        // Intérim : coefficient appliqué sur le brut
-        const chargeRate = s.employerChargeRate / 100;
-        const gross = netDaily / (1 - 0.23); // ~23% salariales estimées
-        const baseCost = gross * (1 + chargeRate);
-        const companyCost = baseCost * s.interimCoefficient;
-        return { net: netDaily, gross: round2(gross), charges: round2(companyCost - gross), companyCost: round2(companyCost) };
-      }
-      case 'contrat_journalier':
+      case 'interim':
+        return {
+          net: netDaily,
+          gross: complet.brutJournalier,
+          charges: round2(complet.coutEntrepriseJour - complet.brutJournalier),
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
+        };
       case 'cdd':
-      case 'cdi': {
-        const chargeRate = s.employerChargeRate / 100;
-        const gross = netDaily / (1 - 0.23);
-        const companyCost = gross * (1 + chargeRate);
-        // CDD : prime précarité 10% + congés payés 10%
-        const cddMult = status === 'cdd' ? 1.20 : 1.0;
         return {
           net: netDaily,
-          gross: round2(gross),
-          charges: round2(gross * chargeRate * cddMult),
-          companyCost: round2(companyCost * cddMult)
+          gross: complet.brutTotalJour,
+          charges: complet.chargesPatronalesJour,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
         };
-      }
+      case 'cdi':
+      case 'contrat_journalier':
+        return {
+          net: complet.netJournalier,
+          gross: complet.brutJournalier,
+          charges: complet.chargesPatronalesJour,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
+        };
       case 'fondateur':
-        return { net: netDaily, gross: netDaily, charges: 0, companyCost: 0 };
+        return {
+          net: netDaily, gross: netDaily, charges: 0, companyCost: 0,
+          detailComplet: complet
+        };
       default:
         return { net: netDaily, gross: netDaily, charges: 0, companyCost: netDaily };
     }
@@ -60,31 +393,52 @@ const Engine = (() => {
 
   /**
    * Calcul du net à partir d'un coût max entreprise.
-   * coût entreprise → brut → net
+   * Interface inchangée + « detailComplet ».
    */
   function companyCostToNet(maxCost, status, settings) {
-    const s = settings || DB.settings.get();
+    var s = settings || DB.settings.get();
+    var cc = getChargesConfig(s);
+    var joursAn = cc.joursOuvresAn || 218;
+
     switch (status) {
       case 'freelance': {
-        const rate = s.freelanceChargeRate / 100;
-        const net = maxCost * (1 - rate);
-        return { net: round2(net), gross: maxCost, charges: round2(maxCost - net), companyCost: maxCost };
+        var tauxAE = (cc.freelance && cc.freelance.tauxCharges) || 21.1;
+        var net = round2(maxCost * (1 - tauxAE / 100));
+        return { net: net, gross: maxCost, charges: round2(maxCost - net), companyCost: maxCost };
       }
       case 'interim': {
-        const chargeRate = s.employerChargeRate / 100;
-        const baseCost = maxCost / s.interimCoefficient;
-        const gross = baseCost / (1 + chargeRate);
-        const net = gross * (1 - 0.23);
-        return { net: round2(net), gross: round2(gross), charges: round2(maxCost - gross), companyCost: maxCost };
+        var coeffAg = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        var coutAn = maxCost * joursAn;
+        var brutBaseAn = round2(coutAn / coeffAg);
+        var detailInt = computeChargesDetaillees(brutBaseAn, cc);
+        var netInt = round2(detailInt.totaux.netAnnuel / joursAn);
+        return { net: netInt, gross: round2(brutBaseAn / joursAn), charges: round2(maxCost - brutBaseAn / joursAn), companyCost: maxCost };
       }
-      case 'contrat_journalier':
-      case 'cdd':
-      case 'cdi': {
-        const chargeRate = s.employerChargeRate / 100;
-        const cddMult = status === 'cdd' ? 1.20 : 1.0;
-        const gross = maxCost / ((1 + chargeRate) * cddMult);
-        const net = gross * (1 - 0.23);
-        return { net: round2(net), gross: round2(gross), charges: round2(maxCost - gross), companyCost: maxCost };
+      case 'cdd': {
+        // coûtEntreprise = brutTotal + chargesPatronales(brutTotal)
+        // brutTotal = brutBase + primePrecarite + indemniteCP
+        var txPrec = (cc.cdd && cc.cdd.primePrecarite) || 10;
+        var txCPcdd = (cc.cdd && cc.cdd.indemniteCP) || 10;
+        var coutAnCDD = maxCost * joursAn;
+        var brutTotCDD = coutEntrepriseToBrutIteratif(coutAnCDD, cc);
+        // brutTotal = brutBase × (1 + txPrec/100) × (1 + txCP/100) approx
+        var multCDD = (1 + txPrec / 100) * (1 + txCPcdd / 100);
+        var brutBaseCDD = round2(brutTotCDD / multCDD);
+        var detailCDD = computeChargesDetaillees(brutBaseCDD, cc);
+        var netCDD = round2(detailCDD.totaux.netAnnuel / joursAn);
+        return { net: netCDD, gross: round2(brutTotCDD / joursAn), charges: round2(maxCost - brutTotCDD / joursAn), companyCost: maxCost };
+      }
+      case 'cdi':
+      case 'contrat_journalier': {
+        var coutAnnuelSal = maxCost * joursAn;
+        var brutAnnuelSal = coutEntrepriseToBrutIteratif(coutAnnuelSal, cc);
+        var detailSal = computeChargesDetaillees(brutAnnuelSal, cc);
+        return {
+          net: round2(detailSal.totaux.netAnnuel / joursAn),
+          gross: round2(brutAnnuelSal / joursAn),
+          charges: round2(detailSal.totaux.chargesPatronales / joursAn),
+          companyCost: maxCost
+        };
       }
       case 'fondateur':
         return { net: maxCost, gross: maxCost, charges: 0, companyCost: 0 };
@@ -95,16 +449,24 @@ const Engine = (() => {
 
   /**
    * Compare tous les statuts pour un objectif net donné.
-   * Retourne un tableau trié par coût entreprise croissant.
+   * Retourne un tableau trié par coût entreprise croissant,
+   * enrichi du détail complet par statut.
    */
   function compareAllStatuses(netDaily, settings) {
-    const s = settings || DB.settings.get();
-    const statuses = ['freelance', 'interim', 'contrat_journalier', 'cdd', 'cdi'];
-    return statuses.map(status => ({
-      status,
-      label: statusLabel(status),
-      ...netToCompanyCost(netDaily, status, s)
-    })).sort((a, b) => a.companyCost - b.companyCost);
+    var s = settings || DB.settings.get();
+    var statuses = ['freelance', 'interim', 'contrat_journalier', 'cdd', 'cdi'];
+    return statuses.map(function(status) {
+      var calc = netToCompanyCost(netDaily, status, s);
+      return {
+        status: status,
+        label: statusLabel(status),
+        net: calc.net,
+        gross: calc.gross,
+        charges: calc.charges,
+        companyCost: calc.companyCost,
+        detailComplet: calc.detailComplet || null
+      };
+    }).sort(function(a, b) { return a.companyCost - b.companyCost; });
   }
 
   /* ----------------------------------------------------------
@@ -727,6 +1089,12 @@ const Engine = (() => {
     calculateSeuilPlancher,
     calculatePointMort,
     calculateTresorerie,
+    // Nouvelles fonctions — calcul détaillé charges sociales
+    getChargesConfig,
+    computeChargesDetaillees,
+    netToBrutIteratif,
+    coutEntrepriseToBrutIteratif,
+    computeCoutComplet,
     round2,
     fmt,
     fmtPercent,
