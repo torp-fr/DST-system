@@ -1076,6 +1076,228 @@ const Engine = (() => {
     return alerts;
   };
 
+  /* ----------------------------------------------------------
+     FONCTIONS TVA — HT / TTC
+     ---------------------------------------------------------- */
+
+  /**
+   * Convertit un montant HT en TTC.
+   * @param {number} ht — montant hors taxes
+   * @param {number} [tauxTVA] — taux de TVA en % (défaut : settings.vatRate)
+   * @returns {number} montant TTC
+   */
+  function computeTTC(ht, tauxTVA) {
+    if (tauxTVA === undefined) {
+      tauxTVA = (DB.settings.get().vatRate || 20);
+    }
+    return round2(ht * (1 + tauxTVA / 100));
+  }
+
+  /**
+   * Convertit un montant TTC en HT.
+   * @param {number} ttc — montant toutes taxes comprises
+   * @param {number} [tauxTVA] — taux de TVA en % (défaut : settings.vatRate)
+   * @returns {number} montant HT
+   */
+  function computeHT(ttc, tauxTVA) {
+    if (tauxTVA === undefined) {
+      tauxTVA = (DB.settings.get().vatRate || 20);
+    }
+    return round2(ttc / (1 + tauxTVA / 100));
+  }
+
+  /**
+   * Retourne le montant de TVA sur un montant HT.
+   */
+  function computeMontantTVA(ht, tauxTVA) {
+    if (tauxTVA === undefined) {
+      tauxTVA = (DB.settings.get().vatRate || 20);
+    }
+    return round2(ht * tauxTVA / 100);
+  }
+
+  /* ----------------------------------------------------------
+     FREELANCE TJM SUR FACTURE
+     ---------------------------------------------------------- */
+
+  /**
+   * Mode "TJM sur facture" pour un freelance :
+   * Le TJM saisi = montant de la facture HT = coût entreprise.
+   * Retourne le détail (net estimé du freelance, charges AE, etc.).
+   *
+   * @param {number} tjmFacture — TJM sur la facture HT
+   * @param {object} [settings] — paramètres
+   * @returns {object}
+   */
+  function freelanceTjmFacture(tjmFacture, settings) {
+    var s = settings || DB.settings.get();
+    var cc = getChargesConfig(s);
+    var tauxAE = (cc.freelance && cc.freelance.tauxCharges) || 21.1;
+    var netFreelance = round2(tjmFacture * (1 - tauxAE / 100));
+    return {
+      mode: 'sur_facture',
+      tjmFacture: round2(tjmFacture),
+      netFreelance: netFreelance,
+      chargesAE: round2(tjmFacture - netFreelance),
+      tauxChargesAE: tauxAE,
+      coutEntrepriseJour: round2(tjmFacture)
+    };
+  }
+
+  /* ----------------------------------------------------------
+     TAUX HORAIRE — Calculs et comparaison
+     ---------------------------------------------------------- */
+
+  /**
+   * Calcule le coût entreprise à partir d'un taux horaire.
+   * Convertit en journalier (taux × heures/jour) puis applique le calcul standard.
+   *
+   * @param {number} tauxHoraire — taux horaire (brut ou net selon le mode)
+   * @param {string} status — statut contractuel
+   * @param {string} mode — 'net' ou 'brut' (le taux saisi est net ou brut ?)
+   * @param {object} [settings] — paramètres
+   * @returns {object} { horaireInput, heuresJour, journalierEquivalent, coutEntrepriseJour, coutEntrepriseHeure, detail }
+   */
+  function computeCoutHoraire(tauxHoraire, status, mode, settings) {
+    var s = settings || DB.settings.get();
+    var heuresJour = s.hoursPerDay || 7;
+    var netJournalier;
+
+    if (mode === 'brut') {
+      // Taux horaire brut → brut journalier → on inverse pour avoir le net
+      var brutJournalier = tauxHoraire * heuresJour;
+      var cc = getChargesConfig(s);
+      var joursAn = cc.joursOuvresAn || 218;
+      var brutAnnuel = brutJournalier * joursAn;
+
+      if (status === 'freelance') {
+        // Pour un freelance, brut = facture HT
+        return {
+          horaireInput: round2(tauxHoraire),
+          heuresJour: heuresJour,
+          mode: 'brut',
+          journalierEquivalent: round2(brutJournalier),
+          coutEntrepriseJour: round2(brutJournalier),
+          coutEntrepriseHeure: round2(tauxHoraire),
+          detail: freelanceTjmFacture(brutJournalier, s)
+        };
+      }
+
+      if (status === 'interim') {
+        // Intérim horaire : taux horaire × coeff agence
+        var coeffAgence = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        var factureHeure = round2(tauxHoraire * coeffAgence);
+        return {
+          horaireInput: round2(tauxHoraire),
+          heuresJour: heuresJour,
+          mode: 'brut',
+          journalierEquivalent: round2(tauxHoraire * heuresJour),
+          coutEntrepriseJour: round2(factureHeure * heuresJour),
+          coutEntrepriseHeure: factureHeure,
+          coefficientAgence: coeffAgence,
+          detail: null
+        };
+      }
+
+      // Salariés (CDI, CDD, contrat journalier)
+      var details = computeChargesDetaillees(brutAnnuel, cc);
+      netJournalier = round2(details.totaux.netAnnuel / joursAn);
+      var complet = computeCoutComplet(netJournalier, status, s);
+      return {
+        horaireInput: round2(tauxHoraire),
+        heuresJour: heuresJour,
+        mode: 'brut',
+        journalierEquivalent: round2(brutJournalier),
+        coutEntrepriseJour: complet.coutEntrepriseJour,
+        coutEntrepriseHeure: round2(complet.coutEntrepriseJour / heuresJour),
+        detail: complet
+      };
+    }
+
+    // Mode net (par défaut)
+    netJournalier = tauxHoraire * heuresJour;
+    var calc = netToCompanyCost(netJournalier, status, s);
+    return {
+      horaireInput: round2(tauxHoraire),
+      heuresJour: heuresJour,
+      mode: 'net',
+      journalierEquivalent: round2(netJournalier),
+      coutEntrepriseJour: calc.companyCost,
+      coutEntrepriseHeure: round2(calc.companyCost / heuresJour),
+      detail: calc
+    };
+  }
+
+  /**
+   * Compare le coût horaire vs journalier pour un opérateur donné.
+   * Retourne quel mode est le plus rentable pour l'entreprise.
+   *
+   * @param {number} tauxHoraire — taux horaire (net ou brut)
+   * @param {number} tauxJournalier — taux journalier (net ou brut)
+   * @param {string} status — statut contractuel
+   * @param {string} mode — 'net' ou 'brut'
+   * @param {object} [settings] — paramètres
+   * @returns {object} { horaire: {...}, journalier: {...}, recommendation, ecart, ecartPercent }
+   */
+  function compareHoraireJournalier(tauxHoraire, tauxJournalier, status, mode, settings) {
+    var s = settings || DB.settings.get();
+    var heuresJour = s.hoursPerDay || 7;
+
+    // Coût via taux horaire
+    var coutHoraire = computeCoutHoraire(tauxHoraire, status, mode, s);
+
+    // Coût via taux journalier
+    var coutJournalier;
+    if (mode === 'brut' && (status === 'freelance' || status === 'interim')) {
+      if (status === 'freelance') {
+        coutJournalier = { coutEntrepriseJour: round2(tauxJournalier) };
+      } else {
+        var cc = getChargesConfig(s);
+        var coeff = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        coutJournalier = { coutEntrepriseJour: round2(tauxJournalier * coeff) };
+      }
+    } else if (mode === 'brut') {
+      // Brut journalier → convertir en net pour le calcul
+      var ccJ = getChargesConfig(s);
+      var joursAnJ = ccJ.joursOuvresAn || 218;
+      var detJ = computeChargesDetaillees(tauxJournalier * joursAnJ, ccJ);
+      var netJ = round2(detJ.totaux.netAnnuel / joursAnJ);
+      coutJournalier = netToCompanyCost(netJ, status, s);
+    } else {
+      coutJournalier = netToCompanyCost(tauxJournalier, status, s);
+    }
+
+    var coutH = coutHoraire.coutEntrepriseJour;
+    var coutJ = coutJournalier.coutEntrepriseJour || coutJournalier.companyCost || 0;
+    var ecart = round2(Math.abs(coutH - coutJ));
+    var ecartPercent = coutJ > 0 ? round2((ecart / coutJ) * 100) : 0;
+
+    var recommendation;
+    if (coutH < coutJ) {
+      recommendation = 'horaire';
+    } else if (coutJ < coutH) {
+      recommendation = 'journalier';
+    } else {
+      recommendation = 'equivalent';
+    }
+
+    return {
+      horaire: {
+        taux: round2(tauxHoraire),
+        coutEntrepriseJour: coutH,
+        coutEntrepriseHeure: coutHoraire.coutEntrepriseHeure,
+        heuresJour: heuresJour
+      },
+      journalier: {
+        taux: round2(tauxJournalier),
+        coutEntrepriseJour: coutJ
+      },
+      recommendation: recommendation,
+      ecart: ecart,
+      ecartPercent: ecartPercent
+    };
+  }
+
   /* --- API publique --- */
   return {
     netToCompanyCost,
@@ -1100,6 +1322,15 @@ const Engine = (() => {
     fmtPercent,
     statusLabel,
     sessionStatusLabel,
-    offerTypeLabel
+    offerTypeLabel,
+    // TVA
+    computeTTC,
+    computeHT,
+    computeMontantTVA,
+    // Freelance TJM sur facture
+    freelanceTjmFacture,
+    // Taux horaire
+    computeCoutHoraire,
+    compareHoraireJournalier
   };
 })();

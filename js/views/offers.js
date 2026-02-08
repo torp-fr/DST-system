@@ -210,7 +210,10 @@ Views.Offers = {
                     <td><strong>${esc(offer.label || '(sans nom)')}</strong></td>
                     <td><span class="tag ${tagClass(offer.type)}">${esc(Engine.offerTypeLabel(offer.type))}</span></td>
                     <td>${clientNames}</td>
-                    <td class="num">${Engine.fmt(offer.price || 0)}</td>
+                    <td class="num">${Engine.fmt(offer.price || 0)} <small class="text-muted">${(() => {
+                      var clients = (offer.clientIds || []).map(function(cid) { return DB.clients.getById(cid); }).filter(Boolean);
+                      return clients.some(function(c) { return c.clientCategory === 'B2C'; }) ? 'TTC' : 'HT';
+                    })()}</small></td>
                     <td>${sessionsHtml}</td>
                     <td>${statusHtml}</td>
                     <td class="actions-cell">
@@ -447,7 +450,7 @@ Views.Offers = {
 
               <div class="form-row">
                 <div class="form-group">
-                  <label for="offer-price">Prix total (EUR) *</label>
+                  <label for="offer-price">Prix total HT (EUR) *</label>
                   <input type="number" id="offer-price" class="form-control" min="0" step="any"
                          value="${data.price}">
                   <span class="form-help" id="floor-hint"></span>

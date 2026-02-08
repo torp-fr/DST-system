@@ -156,11 +156,15 @@ Views.Operators = (() => {
         ? '<span class="tag tag-green">Actif</span>'
         : '<span class="tag tag-neutral">Inactif</span>';
 
+      const rateInfo = op.rateUnit === 'horaire' && op.hourlyRate
+        ? '<small class="text-muted" style="display:block;font-size:0.7rem;">' + Engine.fmt(op.hourlyRate) + '/h</small>'
+        : (op.costMode === 'tjm_facture' ? '<small class="text-muted" style="display:block;font-size:0.7rem;">TJM facture</small>' : '');
+
       return `
         <tr>
           <td><strong>${_escape(op.firstName)} ${_escape(op.lastName)}</strong></td>
           <td><span class="tag ${tagClass}">${Engine.statusLabel(op.status)}</span></td>
-          <td class="num">${cost !== null ? Engine.fmt(cost) : '—'}</td>
+          <td class="num">${cost !== null ? Engine.fmt(cost) : '—'}${rateInfo}</td>
           <td>${_escape(specialties)}</td>
           <td>${activeLabel}</td>
           <td class="actions-cell">
@@ -288,37 +292,83 @@ Views.Operators = (() => {
                 <h3>Tarification</h3>
               </div>
 
+              <!-- Unité de tarification : journalier ou horaire -->
+              <div class="form-group">
+                <label>Unité de tarification</label>
+                <div class="flex gap-16" style="margin-top:4px;">
+                  <label class="form-check">
+                    <input type="radio" name="rateUnit" value="journalier"
+                           ${op.rateUnit !== 'horaire' ? 'checked' : ''} />
+                    <span>Taux journalier</span>
+                  </label>
+                  <label class="form-check">
+                    <input type="radio" name="rateUnit" value="horaire"
+                           ${op.rateUnit === 'horaire' ? 'checked' : ''} />
+                    <span>Taux horaire</span>
+                  </label>
+                </div>
+              </div>
+
               <div class="form-group">
                 <label>Mode de calcul</label>
                 <div class="flex gap-16" style="margin-top:4px;">
                   <label class="form-check">
                     <input type="radio" name="costMode" value="net_desired"
-                           ${op.costMode !== 'company_max' ? 'checked' : ''} />
-                    <span>Net souhaité par l'opérateur</span>
+                           ${op.costMode !== 'company_max' && op.costMode !== 'tjm_facture' ? 'checked' : ''} />
+                    <span id="label-net-desired">Net souhaité par l'opérateur</span>
                   </label>
                   <label class="form-check">
                     <input type="radio" name="costMode" value="company_max"
                            ${op.costMode === 'company_max' ? 'checked' : ''} />
                     <span>Coût max entreprise</span>
                   </label>
+                  <label class="form-check" id="group-tjm-facture" style="${op.status === 'freelance' ? '' : 'display:none;'}">
+                    <input type="radio" name="costMode" value="tjm_facture"
+                           ${op.costMode === 'tjm_facture' ? 'checked' : ''} />
+                    <span>TJM sur facture <small style="color:var(--text-muted);">(facture HT = coût)</small></span>
+                  </label>
                 </div>
               </div>
 
               <div class="form-row">
                 <div class="form-group" id="group-netDaily">
-                  <label for="op-netDaily">Net journalier souhaité (&euro;)</label>
+                  <label for="op-netDaily" id="label-netDaily">Net journalier souhaité (&euro;)</label>
                   <input type="number" id="op-netDaily" class="form-control" min="0" step="any"
                          value="${op.netDaily || ''}" placeholder="Ex : 250" />
                 </div>
                 <div class="form-group" id="group-companyCost">
-                  <label for="op-companyCostDaily">Coût max entreprise / jour (&euro;)</label>
+                  <label for="op-companyCostDaily" id="label-companyCost">Coût max entreprise / jour (&euro;)</label>
                   <input type="number" id="op-companyCostDaily" class="form-control" min="0" step="any"
                          value="${op.companyCostDaily || ''}" placeholder="Ex : 450" />
+                </div>
+                <div class="form-group" id="group-tjmFacture" style="display:none;">
+                  <label for="op-tjmFacture">TJM sur facture HT (&euro;)</label>
+                  <input type="number" id="op-tjmFacture" class="form-control" min="0" step="any"
+                         value="${op.tjmFacture || ''}" placeholder="Ex : 500" />
+                </div>
+              </div>
+
+              <!-- Taux horaire (visible si unité = horaire) -->
+              <div id="group-hourly-fields" style="display:none;">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="op-hourlyRate">Taux horaire (&euro;)</label>
+                    <input type="number" id="op-hourlyRate" class="form-control" min="0" step="any"
+                           value="${op.hourlyRate || ''}" placeholder="Ex : 35" />
+                  </div>
+                  <div class="form-group">
+                    <label for="op-hoursPerDay">Heures / jour</label>
+                    <input type="number" id="op-hoursPerDay" class="form-control" min="1" max="24" step="any"
+                           value="${op.hoursPerDay || DB.settings.get().hoursPerDay || 7}" />
+                  </div>
                 </div>
               </div>
 
               <!-- Résultat du calcul en temps réel -->
               <div id="cost-preview" class="mt-8"></div>
+
+              <!-- Comparaison horaire vs journalier -->
+              <div id="hourly-comparison" class="mt-8"></div>
             </div>
 
             <!-- Spécialités (tags) -->
@@ -372,10 +422,29 @@ Views.Operators = (() => {
       });
     });
 
+    // Basculer entre unités
+    overlay.querySelectorAll('input[name="rateUnit"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        _toggleCostFields();
+        _updateCostPreview();
+      });
+    });
+
     // Mise à jour du calcul en temps réel
     overlay.querySelector('#op-netDaily').addEventListener('input', _updateCostPreview);
     overlay.querySelector('#op-companyCostDaily').addEventListener('input', _updateCostPreview);
-    overlay.querySelector('#op-status').addEventListener('change', _updateCostPreview);
+    overlay.querySelector('#op-status').addEventListener('change', () => {
+      _toggleCostFields();
+      _updateCostPreview();
+    });
+
+    // Champs supplémentaires
+    var tjmInput = overlay.querySelector('#op-tjmFacture');
+    if (tjmInput) tjmInput.addEventListener('input', _updateCostPreview);
+    var hourlyInput = overlay.querySelector('#op-hourlyRate');
+    if (hourlyInput) hourlyInput.addEventListener('input', _updateCostPreview);
+    var hpdInput = overlay.querySelector('#op-hoursPerDay');
+    if (hpdInput) hpdInput.addEventListener('input', _updateCostPreview);
 
     // Sauvegarde
     overlay.querySelector('#modal-save').addEventListener('click', () => {
@@ -385,21 +454,58 @@ Views.Operators = (() => {
     });
   }
 
-  /** Bascule la visibilité des champs selon le mode de coût */
+  /** Bascule la visibilité des champs selon le mode de coût et l'unité */
   function _toggleCostFields() {
     const overlay = document.getElementById('operator-modal-overlay');
     if (!overlay) return;
 
     const mode = overlay.querySelector('input[name="costMode"]:checked').value;
+    const rateUnit = overlay.querySelector('input[name="rateUnit"]:checked').value;
+    const status = overlay.querySelector('#op-status').value;
     const groupNet = overlay.querySelector('#group-netDaily');
     const groupCompany = overlay.querySelector('#group-companyCost');
+    const groupTjmFacture = overlay.querySelector('#group-tjmFacture');
+    const groupHourly = overlay.querySelector('#group-hourly-fields');
+    const groupTjmRadio = overlay.querySelector('#group-tjm-facture');
+    const labelNet = overlay.querySelector('#label-netDaily');
+    const labelCompany = overlay.querySelector('#label-companyCost');
 
-    if (mode === 'net_desired') {
+    // Afficher/masquer le radio TJM sur facture (freelance uniquement)
+    if (groupTjmRadio) {
+      groupTjmRadio.style.display = status === 'freelance' ? '' : 'none';
+      // Si on quitte le statut freelance et qu'on était en mode tjm_facture, basculer
+      if (status !== 'freelance' && mode === 'tjm_facture') {
+        var netRadio = overlay.querySelector('input[name="costMode"][value="net_desired"]');
+        if (netRadio) netRadio.checked = true;
+      }
+    }
+
+    // Afficher les champs horaire si unité = horaire
+    var isHourly = rateUnit === 'horaire';
+    if (groupHourly) groupHourly.style.display = isHourly ? '' : 'none';
+
+    // Labels dynamiques selon unité
+    if (labelNet) {
+      labelNet.textContent = isHourly ? 'Net horaire souhaité (€)' : 'Net journalier souhaité (€)';
+    }
+    if (labelCompany) {
+      labelCompany.textContent = isHourly ? 'Coût max entreprise / heure (€)' : 'Coût max entreprise / jour (€)';
+    }
+
+    var currentMode = overlay.querySelector('input[name="costMode"]:checked').value;
+
+    if (currentMode === 'net_desired') {
       groupNet.style.display = '';
       groupCompany.style.display = 'none';
-    } else {
+      if (groupTjmFacture) groupTjmFacture.style.display = 'none';
+    } else if (currentMode === 'company_max') {
       groupNet.style.display = 'none';
       groupCompany.style.display = '';
+      if (groupTjmFacture) groupTjmFacture.style.display = 'none';
+    } else if (currentMode === 'tjm_facture') {
+      groupNet.style.display = 'none';
+      groupCompany.style.display = 'none';
+      if (groupTjmFacture) groupTjmFacture.style.display = '';
     }
   }
 
@@ -409,23 +515,117 @@ Views.Operators = (() => {
     if (!overlay) return;
 
     const mode = overlay.querySelector('input[name="costMode"]:checked').value;
+    const rateUnit = overlay.querySelector('input[name="rateUnit"]:checked').value;
     const status = overlay.querySelector('#op-status').value;
     const preview = overlay.querySelector('#cost-preview');
+    const comparisonDiv = overlay.querySelector('#hourly-comparison');
     const settings = DB.settings.get();
+    const isHourly = rateUnit === 'horaire';
 
     let calc = null;
 
+    if (mode === 'tjm_facture') {
+      // TJM sur facture (freelance)
+      const tjmVal = parseFloat(overlay.querySelector('#op-tjmFacture').value);
+      if (!tjmVal || tjmVal <= 0) { preview.innerHTML = ''; if (comparisonDiv) comparisonDiv.innerHTML = ''; return; }
+      var tjmResult = Engine.freelanceTjmFacture(tjmVal, settings);
+      preview.innerHTML = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);">
+          <div class="kpi-card">
+            <span class="kpi-label">TJM facture HT</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(tjmResult.tjmFacture)}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Net freelance estimé</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(tjmResult.netFreelance)}</span>
+          </div>
+          <div class="kpi-card kpi-warning">
+            <span class="kpi-label">Coût entreprise / jour</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(tjmResult.coutEntrepriseJour)}</span>
+          </div>
+        </div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">
+          Charges auto-entrepreneur (${tjmResult.tauxChargesAE}%) : ${Engine.fmt(tjmResult.chargesAE)} / jour — à la charge du freelance.
+        </div>
+      `;
+      if (comparisonDiv) comparisonDiv.innerHTML = '';
+      return;
+    }
+
+    if (isHourly) {
+      // Mode horaire
+      const hourlyRate = parseFloat(overlay.querySelector('#op-hourlyRate').value);
+      const hoursPerDay = parseFloat(overlay.querySelector('#op-hoursPerDay').value) || 7;
+      if (!hourlyRate || hourlyRate <= 0) { preview.innerHTML = ''; if (comparisonDiv) comparisonDiv.innerHTML = ''; return; }
+
+      var hrMode = mode === 'company_max' ? 'brut' : 'net';
+      var hrResult = Engine.computeCoutHoraire(hourlyRate, status, hrMode, settings);
+
+      preview.innerHTML = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
+          <div class="kpi-card">
+            <span class="kpi-label">Taux horaire</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(hourlyRate)}/h</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Équivalent journalier (${hoursPerDay}h)</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(hrResult.journalierEquivalent)}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Coût entreprise / heure</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(hrResult.coutEntrepriseHeure)}</span>
+          </div>
+          <div class="kpi-card kpi-warning">
+            <span class="kpi-label">Coût entreprise / jour</span>
+            <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(hrResult.coutEntrepriseJour)}</span>
+          </div>
+        </div>
+      `;
+
+      // Comparaison horaire vs journalier si un taux journalier est aussi renseigné
+      var dailyVal = parseFloat(overlay.querySelector('#op-netDaily').value) || 0;
+      if (dailyVal > 0 && comparisonDiv) {
+        var comp = Engine.compareHoraireJournalier(hourlyRate, dailyVal, status, hrMode, settings);
+        var recoColor = comp.recommendation === 'horaire' ? 'var(--color-success)' : comp.recommendation === 'journalier' ? 'var(--color-info)' : 'var(--text-muted)';
+        var recoLabel = comp.recommendation === 'horaire' ? 'Horaire plus rentable' : comp.recommendation === 'journalier' ? 'Journalier plus rentable' : 'Équivalent';
+        comparisonDiv.innerHTML = `
+          <div class="card" style="padding:14px;margin-top:8px;">
+            <div class="card-header" style="margin-bottom:8px;"><h3>Comparaison horaire / journalier</h3></div>
+            <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);">
+              <div class="kpi-card">
+                <span class="kpi-label">Coût horaire (${comp.horaire.heuresJour}h/j)</span>
+                <span class="kpi-value" style="font-size:1.1rem;">${Engine.fmt(comp.horaire.coutEntrepriseJour)}/j</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Coût journalier</span>
+                <span class="kpi-value" style="font-size:1.1rem;">${Engine.fmt(comp.journalier.coutEntrepriseJour)}/j</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-label">Recommandation</span>
+                <span class="kpi-value" style="font-size:0.95rem;color:${recoColor};">${recoLabel}</span>
+                <span class="kpi-detail">Écart : ${Engine.fmt(comp.ecart)} (${comp.ecartPercent}%)</span>
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (comparisonDiv) {
+        comparisonDiv.innerHTML = '';
+      }
+      return;
+    }
+
+    // Mode journalier classique
     if (mode === 'net_desired') {
       const netVal = parseFloat(overlay.querySelector('#op-netDaily').value);
-      if (!netVal || netVal <= 0) { preview.innerHTML = ''; return; }
+      if (!netVal || netVal <= 0) { preview.innerHTML = ''; if (comparisonDiv) comparisonDiv.innerHTML = ''; return; }
       calc = Engine.netToCompanyCost(netVal, status, settings);
     } else {
       const costVal = parseFloat(overlay.querySelector('#op-companyCostDaily').value);
-      if (!costVal || costVal <= 0) { preview.innerHTML = ''; return; }
+      if (!costVal || costVal <= 0) { preview.innerHTML = ''; if (comparisonDiv) comparisonDiv.innerHTML = ''; return; }
       calc = Engine.companyCostToNet(costVal, status, settings);
     }
 
-    if (!calc) { preview.innerHTML = ''; return; }
+    if (!calc) { preview.innerHTML = ''; if (comparisonDiv) comparisonDiv.innerHTML = ''; return; }
 
     // Taux patronales effectif
     const dc = calc.detailComplet;
@@ -463,6 +663,7 @@ Views.Operators = (() => {
       </div>
       ${cddInfo}
     `;
+    if (comparisonDiv) comparisonDiv.innerHTML = '';
   }
 
   /* ----------------------------------------------------------
@@ -806,6 +1007,10 @@ Views.Operators = (() => {
    */
   function _saveOperator(operatorId, overlay) {
     const costMode = overlay.querySelector('input[name="costMode"]:checked').value;
+    const rateUnit = overlay.querySelector('input[name="rateUnit"]:checked').value;
+    const status = overlay.querySelector('#op-status').value;
+    const settings = DB.settings.get();
+    const isHourly = rateUnit === 'horaire';
 
     // Transformer les spécialités en tableau de tags propres
     const rawSpecialties = overlay.querySelector('#op-specialties').value;
@@ -814,20 +1019,45 @@ Views.Operators = (() => {
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
+    let netDaily = 0;
+    let companyCostDaily = 0;
+    let hourlyRate = parseFloat(overlay.querySelector('#op-hourlyRate').value) || 0;
+    let hoursPerDay = parseFloat(overlay.querySelector('#op-hoursPerDay').value) || 7;
+    let tjmFacture = parseFloat(overlay.querySelector('#op-tjmFacture').value) || 0;
+
+    if (costMode === 'tjm_facture') {
+      companyCostDaily = tjmFacture;
+      var tjmR = Engine.freelanceTjmFacture(tjmFacture, settings);
+      netDaily = tjmR.netFreelance;
+    } else if (isHourly && hourlyRate > 0) {
+      var hrMode = costMode === 'company_max' ? 'brut' : 'net';
+      var hrResult = Engine.computeCoutHoraire(hourlyRate, status, hrMode, settings);
+      companyCostDaily = hrResult.coutEntrepriseJour;
+      netDaily = hrResult.journalierEquivalent;
+    } else if (costMode === 'net_desired') {
+      netDaily = parseFloat(overlay.querySelector('#op-netDaily').value) || 0;
+      var calcN = Engine.netToCompanyCost(netDaily, status, settings);
+      companyCostDaily = calcN ? calcN.companyCost : 0;
+    } else if (costMode === 'company_max') {
+      companyCostDaily = parseFloat(overlay.querySelector('#op-companyCostDaily').value) || 0;
+      var calcC = Engine.companyCostToNet(companyCostDaily, status, settings);
+      netDaily = calcC ? calcC.net : 0;
+    }
+
     const data = {
       firstName:        overlay.querySelector('#op-firstName').value.trim(),
       lastName:         overlay.querySelector('#op-lastName').value.trim(),
       email:            overlay.querySelector('#op-email').value.trim(),
       phone:            overlay.querySelector('#op-phone').value.trim(),
-      status:           overlay.querySelector('#op-status').value,
+      status:           status,
       active:           overlay.querySelector('#op-active').checked,
       costMode:         costMode,
-      netDaily:         costMode === 'net_desired'
-                          ? parseFloat(overlay.querySelector('#op-netDaily').value) || 0
-                          : 0,
-      companyCostDaily: costMode === 'company_max'
-                          ? parseFloat(overlay.querySelector('#op-companyCostDaily').value) || 0
-                          : 0,
+      rateUnit:         rateUnit,
+      hourlyRate:       Engine.round2(hourlyRate),
+      hoursPerDay:      hoursPerDay,
+      tjmFacture:       Engine.round2(tjmFacture),
+      netDaily:         Engine.round2(netDaily),
+      companyCostDaily: Engine.round2(companyCostDaily),
       specialties:      specialties,
       notes:            overlay.querySelector('#op-notes').value.trim()
     };
