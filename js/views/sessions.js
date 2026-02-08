@@ -208,6 +208,13 @@ Views.Sessions = {
           : cost.marginPercent < (DB.settings.get().marginAlertThreshold || 15) ? 'text-yellow'
           : 'text-green';
 
+        // HT/TTC selon catégorie client
+        const sessionClients = (s.clientIds || []).map(cid => DB.clients.getById(cid)).filter(Boolean);
+        const hasB2C = sessionClients.some(c => c.clientCategory === 'B2C');
+        const priceHT = s.price || 0;
+        const prixAffiche = hasB2C ? Engine.computeTTC(priceHT) : priceHT;
+        const prixLabel = hasB2C ? 'TTC' : 'HT';
+
         return `
           <tr data-id="${s.id}">
             <td>${fmtDate(s.date)}${s.time ? '<br><span class="text-muted" style="font-size:.75rem">' + s.time + '</span>' : ''}</td>
@@ -216,7 +223,7 @@ Views.Sessions = {
             <td>${truncList(s.moduleIds, moduleName, 2)}</td>
             <td>${truncList(s.operatorIds, operatorName, 2)}</td>
             <td>${locationName(s.locationId)}</td>
-            <td class="num">${s.price ? Engine.fmt(s.price) : '—'}</td>
+            <td class="num">${priceHT ? Engine.fmt(prixAffiche) + ' <small class="text-muted">' + prixLabel + '</small>' : '—'}</td>
             <td class="num ${marginClass}">${s.price ? Engine.fmtPercent(cost.marginPercent) : '—'}</td>
             <td><span class="tag ${statusTagClass(s.status)}">${Engine.sessionStatusLabel(s.status)}</span></td>
             <td class="actions-cell">
@@ -674,10 +681,11 @@ Views.Sessions = {
 
                   <!-- Prix -->
                   <div class="form-group">
-                    <label for="sess-price">Prix facturé (EUR)</label>
+                    <label for="sess-price">Prix facturé HT (EUR)</label>
                     <input type="number" id="sess-price" class="form-control"
                            value="${data.price || 0}" min="0" step="any">
                     <div class="validation-hint" id="sess-price-hint"></div>
+                    <div id="sess-price-ttc-info" class="form-help" style="margin-top:4px;"></div>
                   </div>
 
                   <!-- Lieu -->
@@ -803,10 +811,11 @@ Views.Sessions = {
         form.querySelector('.btn-cancel').addEventListener('click', closeModal);
         overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
-        // Validation prix vs seuil plancher en temps réel
+        // Validation prix vs seuil plancher + affichage TTC si B2C
         function validatePrice() {
           const priceInput = form.querySelector('#sess-price');
           const hint = form.querySelector('#sess-price-hint');
+          const ttcInfo = form.querySelector('#sess-price-ttc-info');
           if (!priceInput || !hint) return;
           const price = parseFloat(priceInput.value) || 0;
           const seuilPlancher = typeof Engine.calculateSeuilPlancher === 'function' ? Engine.calculateSeuilPlancher() : 0;
@@ -824,6 +833,26 @@ Views.Sessions = {
             priceInput.classList.remove('field-valid', 'field-invalid');
             hint.className = 'validation-hint';
             hint.textContent = '';
+          }
+          // Afficher TTC si un client B2C est sélectionné
+          if (ttcInfo && price > 0) {
+            var selectedClients = [];
+            form.querySelectorAll('input[name="clientIds"]:checked').forEach(function(cb) {
+              var cl = DB.clients.getById(cb.value);
+              if (cl) selectedClients.push(cl);
+            });
+            var hasB2C = selectedClients.some(function(c) { return c.clientCategory === 'B2C'; });
+            if (hasB2C) {
+              var ttc = Engine.computeTTC(price);
+              var tva = Engine.computeMontantTVA(price);
+              ttcInfo.innerHTML = 'Client B2C : prix TTC = <strong>' + Engine.fmt(ttc) + '</strong> (TVA : ' + Engine.fmt(tva) + ')';
+              ttcInfo.style.color = 'var(--color-warning)';
+            } else {
+              ttcInfo.innerHTML = 'Client B2B : prix affiché HT';
+              ttcInfo.style.color = 'var(--text-muted)';
+            }
+          } else if (ttcInfo) {
+            ttcInfo.innerHTML = '';
           }
         }
         const priceEl = form.querySelector('#sess-price');
@@ -843,7 +872,7 @@ Views.Sessions = {
 
         // Checkboxes modules, opérateurs, clients → recalcul
         form.querySelectorAll('input[name="moduleIds"], input[name="operatorIds"], input[name="clientIds"]').forEach(cb => {
-          cb.addEventListener('change', refreshRightPanel);
+          cb.addEventListener('change', () => { refreshRightPanel(); validatePrice(); });
         });
 
         // Coûts variables — montants → recalcul

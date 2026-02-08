@@ -31,6 +31,7 @@ Views.Settings = {
       targetMarginPercent:      settings.targetMarginPercent ?? 30,
       marginAlertThreshold:     settings.marginAlertThreshold ?? 15,
       vatRate:                  settings.vatRate ?? 20,
+      hoursPerDay:              settings.hoursPerDay ?? 7,
       estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
       nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50,
       chargesConfig:            JSON.parse(JSON.stringify(settings.chargesConfig || DB.settings.getDefaults().chargesConfig))
@@ -247,6 +248,11 @@ Views.Settings = {
             <div class="form-group">
               <label for="eco-vat">Taux TVA (%)</label>
               <input type="number" id="eco-vat" class="form-control" value="${state.vatRate}" min="0" max="100" step="any">
+            </div>
+            <div class="form-group">
+              <label for="eco-hours-day">Heures de travail / jour</label>
+              <input type="number" id="eco-hours-day" class="form-control" value="${state.hoursPerDay || 7}" min="1" max="24" step="any">
+              <span class="form-help">Pour la conversion taux horaire → journalier</span>
             </div>
             <div class="form-group">
               <label for="eco-est-sessions">Sessions estimées / an</label>
@@ -616,6 +622,7 @@ Views.Settings = {
       state.targetMarginPercent      = parseFloat($('#eco-target-margin').value) || 0;
       state.marginAlertThreshold     = parseFloat($('#eco-margin-alert').value) || 0;
       state.vatRate                  = parseFloat($('#eco-vat').value) || 0;
+      state.hoursPerDay              = parseFloat($('#eco-hours-day').value) || 7;
       state.estimatedAnnualSessions  = parseInt($('#eco-est-sessions').value, 10) || 1;
       state.nbJoursObjectifAnnuel    = parseInt($('#eco-nb-jours').value, 10) || 50;
 
@@ -867,6 +874,7 @@ Views.Settings = {
           targetMarginPercent:         state.targetMarginPercent,
           marginAlertThreshold:        state.marginAlertThreshold,
           vatRate:                     state.vatRate,
+          hoursPerDay:                 state.hoursPerDay,
           estimatedAnnualSessions:     state.estimatedAnnualSessions,
           nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel,
           chargesConfig:               state.chargesConfig

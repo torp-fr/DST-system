@@ -1233,3 +1233,121 @@ textarea.form-control {
 .validation-hint.hint-ok { color: var(--color-success); }
 .validation-hint.hint-warn { color: var(--color-warning); }
 .validation-hint.hint-danger { color: var(--accent-red-light); }
+
+/* ============================================================
+   QUICK ACTIONS — Raccourcis dashboard
+   ============================================================ */
+.quick-actions-card { margin-bottom: 24px; }
+.quick-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.quick-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(145deg, var(--bg-tertiary) 0%, rgba(20,20,26,0.9) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+}
+.quick-action-btn:hover {
+  border-color: var(--neon-red);
+  box-shadow: 0 0 12px var(--neon-red-glow), 0 4px 16px rgba(0,0,0,0.3);
+  transform: translateY(-2px);
+}
+.quick-action-btn .qa-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--neon-red-soft);
+  border-radius: 10px;
+}
+.quick-action-btn strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-heading);
+  margin-bottom: 2px;
+}
+.quick-action-btn small {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* ============================================================
+   WIZARD — Parcours guidé multi-étapes
+   ============================================================ */
+.wizard-overlay { z-index: 1100; }
+.wizard-modal { max-width: 800px; }
+.wizard-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 28px;
+  padding: 16px 0;
+}
+.wizard-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.wizard-step-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.88rem;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  color: var(--text-muted);
+  transition: all var(--transition-normal);
+}
+.wizard-step.active .wizard-step-num {
+  background: var(--accent-red);
+  border-color: var(--neon-red);
+  color: #fff;
+  box-shadow: 0 0 12px var(--neon-red-glow);
+}
+.wizard-step.completed .wizard-step-num {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+.wizard-step-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+.wizard-step.active .wizard-step-label { color: var(--text-heading); }
+.wizard-step.completed .wizard-step-label { color: var(--color-success); }
+.wizard-step-line {
+  width: 48px;
+  height: 2px;
+  background: var(--border-color);
+  margin: 0 8px;
+  margin-bottom: 20px;
+  transition: background var(--transition-normal);
+}
+.wizard-step-line.completed { background: var(--color-success); }
+.wizard-body { min-height: 200px; }

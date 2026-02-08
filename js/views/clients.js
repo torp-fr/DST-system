@@ -140,7 +140,10 @@ Views.Clients = (() => {
       const isExpanded = _expandedClientId === client.id;
       return `
         <tr class="client-row ${isExpanded ? 'active' : ''}" data-id="${client.id}" style="cursor:pointer;">
-          <td><strong>${_escapeHtml(client.name || '—')}</strong></td>
+          <td>
+            <strong>${_escapeHtml(client.name || '—')}</strong>
+            ${client.clientCategory ? '<span class="tag ' + (client.clientCategory === 'B2B' ? 'tag-blue' : 'tag-yellow') + '" style="margin-left:6px;font-size:0.6rem;">' + client.clientCategory + '</span>' : ''}
+          </td>
           <td><span class="tag ${tagClass}">${_escapeHtml(client.type || 'N/C')}</span></td>
           <td>
             ${client.contactName ? _escapeHtml(client.contactName) : '<span class="text-muted">—</span>'}
@@ -241,6 +244,7 @@ Views.Clients = (() => {
             <table class="data-table" style="font-size:0.85rem;">
               <tbody>
                 <tr><td class="text-muted" style="width:140px;">Type</td><td><span class="tag ${_typeTagClass(client.type)}">${_escapeHtml(client.type || 'N/C')}</span></td></tr>
+                <tr><td class="text-muted">Catégorie</td><td><span class="tag ${client.clientCategory === 'B2C' ? 'tag-yellow' : 'tag-blue'}">${_escapeHtml(client.clientCategory || 'B2B')}</span> <small class="text-muted">${client.clientCategory === 'B2C' ? 'Tarifs TTC' : 'Tarifs HT'}</small></td></tr>
                 <tr><td class="text-muted">Contact</td><td>${_escapeHtml(client.contactName || '—')}</td></tr>
                 <tr><td class="text-muted">Email</td><td>${client.contactEmail ? `<a href="mailto:${_escapeAttr(client.contactEmail)}">${_escapeHtml(client.contactEmail)}</a>` : '—'}</td></tr>
                 <tr><td class="text-muted">Téléphone</td><td>${_escapeHtml(client.contactPhone || '—')}</td></tr>
@@ -295,12 +299,15 @@ Views.Clients = (() => {
                 ${clientSessions.map(s => {
                   const cost = Engine.computeSessionCost(s);
                   const statusLabel = Engine.sessionStatusLabel ? Engine.sessionStatusLabel(s.status) : (s.status || '—');
+                  const isB2C = client.clientCategory === 'B2C';
+                  const prixAffiche = isB2C && s.price ? Engine.computeTTC(s.price) : (s.price || 0);
+                  const prixLabel = isB2C ? 'TTC' : 'HT';
                   return `
                     <tr>
                       <td>${_formatDate(s.date)}</td>
                       <td>${_escapeHtml(s.label || s.name || '—')}</td>
                       <td><span class="tag ${_sessionStatusTag(s.status)}">${_escapeHtml(statusLabel)}</span></td>
-                      <td class="num">${Engine.fmt(s.price || 0)}</td>
+                      <td class="num">${Engine.fmt(prixAffiche)} <small class="text-muted">${prixLabel}</small></td>
                       <td class="num">${Engine.fmt(cost.totalCost)}</td>
                       <td class="num ${cost.marginPercent < 0 ? 'text-red' : ''}">${cost.marginPercent.toFixed(1)} %</td>
                     </tr>
@@ -434,6 +441,24 @@ Views.Clients = (() => {
                    value="${isCustomType ? _escapeAttr(c.type) : ''}" placeholder="Saisissez un type..." />
           </div>
 
+          <!-- Catégorie B2B / B2C -->
+          <div class="form-group">
+            <label for="client-category">Catégorie de facturation</label>
+            <div class="flex gap-16" style="margin-top:4px;">
+              <label class="form-check">
+                <input type="radio" name="clientCategory" value="B2B"
+                       ${(c.clientCategory || 'B2B') === 'B2B' ? 'checked' : ''} />
+                <span>B2B <small style="color:var(--text-muted);">(tarifs HT)</small></span>
+              </label>
+              <label class="form-check">
+                <input type="radio" name="clientCategory" value="B2C"
+                       ${c.clientCategory === 'B2C' ? 'checked' : ''} />
+                <span>B2C <small style="color:var(--text-muted);">(tarifs TTC)</small></span>
+              </label>
+            </div>
+            <span class="form-help">B2B : prix affichés HT. B2C : prix affichés TTC (TVA incluse).</span>
+          </div>
+
           <div class="form-row">
             <div class="form-group">
               <label for="client-contact-name">Nom du contact</label>
@@ -530,9 +555,13 @@ Views.Clients = (() => {
         type = overlay.querySelector('#client-type-custom').value.trim() || 'Autre';
       }
 
+      /* Catégorie B2B / B2C */
+      const clientCategory = (overlay.querySelector('input[name="clientCategory"]:checked') || {}).value || 'B2B';
+
       const data = {
         name,
         type,
+        clientCategory,
         contactName: overlay.querySelector('#client-contact-name').value.trim(),
         contactEmail: overlay.querySelector('#client-contact-email').value.trim(),
         contactPhone: overlay.querySelector('#client-contact-phone').value.trim(),

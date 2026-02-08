@@ -198,6 +198,8 @@ const DB = (() => {
     targetMarginPercent: 30,
     // Taux TVA (%)
     vatRate: 20,
+    // Heures de travail par jour (pour calcul taux horaire → journalier)
+    hoursPerDay: 7,
     // Amortissements matériels annuels
     equipmentAmortization: [
       { label: 'Simulateurs laser', amount: 0, durationYears: 5 },

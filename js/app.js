@@ -346,6 +346,295 @@ function confirmDelete(entityName) {
   return confirm('Confirmer la suppression de "' + entityName + '" ?\nCette action est irréversible.');
 }
 
+/* ============================================================
+   PARCOURS GUIDÉ — Wizard multi-étapes
+   Client → Offre → Session → Suivi
+   ============================================================ */
+window.DST_Wizard = function() {
+  'use strict';
+
+  var currentStep = 0;
+  var wizardData = {
+    clientId: null,
+    offerId: null,
+    sessionId: null
+  };
+
+  function esc(str) {
+    if (str == null) return '';
+    var d = document.createElement('div');
+    d.textContent = String(str);
+    return d.innerHTML;
+  }
+
+  function renderWizard() {
+    // Remove previous wizard
+    var prev = document.getElementById('wizard-overlay');
+    if (prev) prev.remove();
+
+    var overlay = document.createElement('div');
+    overlay.id = 'wizard-overlay';
+    overlay.className = 'modal-overlay wizard-overlay';
+
+    var steps = [
+      { label: 'Client', icon: '&#128100;' },
+      { label: 'Offre', icon: '&#128230;' },
+      { label: 'Session', icon: '&#128197;' },
+      { label: 'Terminé', icon: '&#10003;' }
+    ];
+
+    var stepsHtml = '<div class="wizard-steps">';
+    steps.forEach(function(s, i) {
+      var cls = i < currentStep ? 'wizard-step completed' : i === currentStep ? 'wizard-step active' : 'wizard-step';
+      stepsHtml += '<div class="' + cls + '"><span class="wizard-step-num">' + (i + 1) + '</span><span class="wizard-step-label">' + s.label + '</span></div>';
+      if (i < steps.length - 1) stepsHtml += '<div class="wizard-step-line ' + (i < currentStep ? 'completed' : '') + '"></div>';
+    });
+    stepsHtml += '</div>';
+
+    var bodyHtml = '';
+    if (currentStep === 0) bodyHtml = renderStep0();
+    else if (currentStep === 1) bodyHtml = renderStep1();
+    else if (currentStep === 2) bodyHtml = renderStep2();
+    else bodyHtml = renderStep3();
+
+    overlay.innerHTML = '<div class="modal modal-lg wizard-modal">'
+      + '<div class="modal-header"><h2>Parcours guidé</h2><button class="btn btn-sm btn-ghost" id="wizard-close">&times;</button></div>'
+      + '<div class="modal-body">' + stepsHtml + '<div class="wizard-body">' + bodyHtml + '</div></div>'
+      + '<div class="modal-footer">'
+      + (currentStep > 0 ? '<button class="btn" id="wizard-prev">Retour</button>' : '')
+      + '<button class="btn" id="wizard-cancel">Annuler</button>'
+      + (currentStep < 3 ? '<button class="btn btn-primary" id="wizard-next">' + (currentStep === 2 ? 'Créer la session' : 'Suivant') + '</button>' : '<button class="btn btn-primary" id="wizard-finish">Fermer</button>')
+      + '</div></div>';
+
+    document.body.appendChild(overlay);
+    attachWizardEvents(overlay);
+  }
+
+  /* Step 0: Sélectionner ou créer un client */
+  function renderStep0() {
+    var clients = DB.clients.getAll().filter(function(c) { return c.active !== false; });
+    var html = '<h3 style="margin-bottom:12px;">Sélectionner ou créer un client</h3>';
+
+    if (clients.length > 0) {
+      html += '<div class="form-group"><label>Client existant</label><select id="wiz-client" class="form-control"><option value="">— Nouveau client —</option>';
+      clients.forEach(function(c) {
+        var sel = wizardData.clientId === c.id ? 'selected' : '';
+        html += '<option value="' + c.id + '" ' + sel + '>' + esc(c.name || c.company || c.id) + ' (' + (c.clientCategory || 'B2B') + ')</option>';
+      });
+      html += '</select></div>';
+    }
+
+    html += '<div id="wiz-new-client"' + (wizardData.clientId ? ' style="display:none;"' : '') + '>';
+    html += '<div class="form-row"><div class="form-group"><label>Nom *</label><input type="text" id="wiz-client-name" class="form-control" placeholder="Nom du client" /></div>';
+    html += '<div class="form-group"><label>Type</label><select id="wiz-client-type" class="form-control"><option value="entreprise">Entreprise</option><option value="administration">Administration</option><option value="association">Association</option><option value="particulier">Particulier</option></select></div></div>';
+    html += '<div class="form-group"><label>Catégorie</label><div class="flex gap-16" style="margin-top:4px;"><label class="form-check"><input type="radio" name="wiz-category" value="B2B" checked /><span>B2B (HT)</span></label><label class="form-check"><input type="radio" name="wiz-category" value="B2C" /><span>B2C (TTC)</span></label></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Email</label><input type="email" id="wiz-client-email" class="form-control" /></div>';
+    html += '<div class="form-group"><label>Téléphone</label><input type="tel" id="wiz-client-phone" class="form-control" /></div></div>';
+    html += '</div>';
+
+    return html;
+  }
+
+  /* Step 1: Créer une offre pour le client */
+  function renderStep1() {
+    var clientName = '';
+    if (wizardData.clientId) {
+      var c = DB.clients.getById(wizardData.clientId);
+      clientName = c ? (c.name || c.company) : '';
+    }
+
+    var modules = DB.modules.getAll();
+    var html = '<h3 style="margin-bottom:12px;">Définir l\'offre pour ' + esc(clientName) + '</h3>';
+
+    html += '<div class="form-row"><div class="form-group"><label>Libellé *</label><input type="text" id="wiz-offer-label" class="form-control" placeholder="Ex : Formation Initiale Q1" /></div>';
+    html += '<div class="form-group"><label>Type d\'offre</label><select id="wiz-offer-type" class="form-control"><option value="one_shot">Session unique</option><option value="abonnement">Abonnement</option><option value="personnalisee">Personnalisée</option></select></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Prix HT (€)</label><input type="number" id="wiz-offer-price" class="form-control" min="0" step="any" placeholder="0" /></div>';
+    html += '<div class="form-group" id="wiz-abo-sessions" style="display:none;"><label>Nombre de sessions</label><input type="number" id="wiz-offer-nb" class="form-control" min="1" step="any" value="1" /></div></div>';
+
+    if (modules.length > 0) {
+      html += '<div class="form-group"><label>Modules inclus</label><div style="max-height:120px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;">';
+      modules.forEach(function(m) {
+        html += '<label class="form-check" style="margin-bottom:4px;"><input type="checkbox" name="wiz-modules" value="' + m.id + '" /><span>' + esc(m.name) + '</span></label>';
+      });
+      html += '</div></div>';
+    }
+
+    return html;
+  }
+
+  /* Step 2: Planifier la session */
+  function renderStep2() {
+    var operators = DB.operators.getAll().filter(function(o) { return o.active !== false; });
+    var locations = DB.locations.getAll();
+
+    var html = '<h3 style="margin-bottom:12px;">Planifier la session de formation</h3>';
+    html += '<div class="form-row"><div class="form-group"><label>Libellé de la session</label><input type="text" id="wiz-sess-label" class="form-control" placeholder="Ex : Session initiale" /></div>';
+    html += '<div class="form-group"><label>Date *</label><input type="date" id="wiz-sess-date" class="form-control" /></div>';
+    html += '<div class="form-group"><label>Heure</label><input type="time" id="wiz-sess-time" class="form-control" /></div></div>';
+
+    if (locations.length > 0) {
+      html += '<div class="form-group"><label>Lieu</label><select id="wiz-sess-location" class="form-control"><option value="">— Aucun —</option>';
+      locations.forEach(function(l) { html += '<option value="' + l.id + '">' + esc(l.name) + '</option>'; });
+      html += '</select></div>';
+    }
+
+    if (operators.length > 0) {
+      html += '<div class="form-group"><label>Opérateurs</label><div style="max-height:120px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;">';
+      operators.forEach(function(o) {
+        html += '<label class="form-check" style="margin-bottom:4px;"><input type="checkbox" name="wiz-operators" value="' + o.id + '" /><span>' + esc((o.firstName || '') + ' ' + (o.lastName || '')) + ' (' + Engine.statusLabel(o.status) + ')</span></label>';
+      });
+      html += '</div></div>';
+    }
+
+    return html;
+  }
+
+  /* Step 3: Récapitulatif */
+  function renderStep3() {
+    var html = '<div class="text-center" style="padding:24px;">';
+    html += '<div style="font-size:3rem;margin-bottom:12px;">&#10003;</div>';
+    html += '<h3>Parcours terminé !</h3>';
+    html += '<p class="text-muted" style="margin-top:8px;">Le client, l\'offre et la session ont été créés avec succès.</p>';
+
+    if (wizardData.clientId) {
+      var c = DB.clients.getById(wizardData.clientId);
+      html += '<p style="margin-top:12px;"><strong>Client :</strong> ' + esc(c ? c.name : '—') + '</p>';
+    }
+    if (wizardData.offerId) {
+      var o = DB.offers.getById(wizardData.offerId);
+      html += '<p><strong>Offre :</strong> ' + esc(o ? o.label : '—') + ' — ' + Engine.fmt(o ? o.price : 0) + ' HT</p>';
+    }
+    if (wizardData.sessionId) {
+      var s = DB.sessions.getById(wizardData.sessionId);
+      html += '<p><strong>Session :</strong> ' + esc(s ? s.label : '—') + ' le ' + (s ? s.date : '—') + '</p>';
+    }
+
+    html += '<div style="margin-top:20px;" class="flex gap-8" style="justify-content:center;">';
+    html += '<button class="btn" onclick="App.navigate(\'clients\');">Voir les clients</button>';
+    html += '<button class="btn" onclick="App.navigate(\'sessions\');">Voir les sessions</button>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function attachWizardEvents(overlay) {
+    overlay.querySelector('#wizard-close').addEventListener('click', function() { overlay.remove(); });
+    overlay.querySelector('#wizard-cancel').addEventListener('click', function() { overlay.remove(); });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+
+    var prevBtn = overlay.querySelector('#wizard-prev');
+    if (prevBtn) prevBtn.addEventListener('click', function() { currentStep--; renderWizard(); });
+
+    var nextBtn = overlay.querySelector('#wizard-next');
+    if (nextBtn) nextBtn.addEventListener('click', function() { processStep(overlay); });
+
+    var finishBtn = overlay.querySelector('#wizard-finish');
+    if (finishBtn) finishBtn.addEventListener('click', function() { overlay.remove(); App.navigate('dashboard'); });
+
+    // Step 0: toggle new client form
+    var clientSel = overlay.querySelector('#wiz-client');
+    if (clientSel) {
+      clientSel.addEventListener('change', function() {
+        var newClientDiv = overlay.querySelector('#wiz-new-client');
+        if (newClientDiv) newClientDiv.style.display = clientSel.value ? 'none' : '';
+      });
+    }
+
+    // Step 1: toggle abo fields
+    var offerType = overlay.querySelector('#wiz-offer-type');
+    if (offerType) {
+      offerType.addEventListener('change', function() {
+        var aboDiv = overlay.querySelector('#wiz-abo-sessions');
+        if (aboDiv) aboDiv.style.display = offerType.value === 'abonnement' ? '' : 'none';
+      });
+    }
+  }
+
+  function processStep(overlay) {
+    if (currentStep === 0) {
+      // Create or select client
+      var clientSel = overlay.querySelector('#wiz-client');
+      if (clientSel && clientSel.value) {
+        wizardData.clientId = clientSel.value;
+      } else {
+        var name = (overlay.querySelector('#wiz-client-name') || {}).value;
+        if (!name || !name.trim()) { Toast.show('Le nom du client est obligatoire.', 'error'); return; }
+        var cat = (overlay.querySelector('input[name="wiz-category"]:checked') || {}).value || 'B2B';
+        var type = (overlay.querySelector('#wiz-client-type') || {}).value || 'entreprise';
+        var newClient = DB.clients.create({
+          name: name.trim(),
+          type: type,
+          clientCategory: cat,
+          contactEmail: (overlay.querySelector('#wiz-client-email') || {}).value || '',
+          contactPhone: (overlay.querySelector('#wiz-client-phone') || {}).value || '',
+          active: true
+        });
+        wizardData.clientId = newClient.id;
+        Toast.show('Client « ' + name.trim() + ' » créé.', 'success');
+      }
+      currentStep++;
+      renderWizard();
+    } else if (currentStep === 1) {
+      // Create offer
+      var label = (overlay.querySelector('#wiz-offer-label') || {}).value;
+      if (!label || !label.trim()) { Toast.show('Le libellé de l\'offre est obligatoire.', 'error'); return; }
+      var offerType = (overlay.querySelector('#wiz-offer-type') || {}).value || 'one_shot';
+      var price = parseFloat((overlay.querySelector('#wiz-offer-price') || {}).value) || 0;
+      var nbSessions = offerType === 'abonnement' ? (parseInt((overlay.querySelector('#wiz-offer-nb') || {}).value) || 1) : 0;
+      var moduleIds = [];
+      overlay.querySelectorAll('input[name="wiz-modules"]:checked').forEach(function(cb) { moduleIds.push(cb.value); });
+
+      var newOffer = DB.offers.create({
+        label: label.trim(),
+        type: offerType,
+        price: price,
+        nbSessions: nbSessions,
+        clientIds: [wizardData.clientId],
+        moduleIds: moduleIds,
+        active: true
+      });
+      wizardData.offerId = newOffer.id;
+      Toast.show('Offre « ' + label.trim() + ' » créée.', 'success');
+      currentStep++;
+      renderWizard();
+    } else if (currentStep === 2) {
+      // Create session
+      var sessDate = (overlay.querySelector('#wiz-sess-date') || {}).value;
+      if (!sessDate) { Toast.show('La date de session est obligatoire.', 'error'); return; }
+      var sessLabel = (overlay.querySelector('#wiz-sess-label') || {}).value || 'Session';
+      var sessTime = (overlay.querySelector('#wiz-sess-time') || {}).value || '';
+      var locationId = (overlay.querySelector('#wiz-sess-location') || {}).value || '';
+      var operatorIds = [];
+      overlay.querySelectorAll('input[name="wiz-operators"]:checked').forEach(function(cb) { operatorIds.push(cb.value); });
+
+      // Récupérer les modules de l'offre
+      var offer = wizardData.offerId ? DB.offers.getById(wizardData.offerId) : null;
+      var moduleIds2 = offer ? (offer.moduleIds || []) : [];
+      var price2 = offer ? (offer.price || 0) : 0;
+
+      var newSession = DB.sessions.create({
+        label: sessLabel.trim(),
+        date: sessDate,
+        time: sessTime,
+        clientIds: [wizardData.clientId],
+        moduleIds: moduleIds2,
+        operatorIds: operatorIds,
+        locationId: locationId,
+        offerId: wizardData.offerId || '',
+        price: price2,
+        status: 'planifiee',
+        variableCosts: []
+      });
+      wizardData.sessionId = newSession.id;
+      Toast.show('Session planifiée avec succès.', 'success');
+      currentStep++;
+      renderWizard();
+    }
+  }
+
+  renderWizard();
+};
+
 /* --- Démarrage --- */
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
