@@ -427,6 +427,21 @@ Views.Operators = (() => {
 
     if (!calc) { preview.innerHTML = ''; return; }
 
+    // Taux patronales effectif
+    const dc = calc.detailComplet;
+    const tauxPatroInfo = dc && dc.tauxPatronalesEffectif
+      ? ' <span style="font-size:0.7rem;color:var(--text-muted);">(' + dc.tauxPatronalesEffectif + '% eff.)</span>'
+      : '';
+    const tauxSalInfo = dc && dc.tauxSalarialesEffectif
+      ? ' <span style="font-size:0.7rem;color:var(--text-muted);">(' + dc.tauxSalarialesEffectif + '% eff.)</span>'
+      : '';
+
+    // Infos spécifiques CDD
+    let cddInfo = '';
+    if (dc && status === 'cdd' && dc.majorationCDD) {
+      cddInfo = '<div style="font-size:0.75rem;color:var(--color-warning);margin-top:8px;">Majoration CDD (précarité + CP) : +' + Engine.fmt(dc.majorationCDD) + '/jour</div>';
+    }
+
     preview.innerHTML = `
       <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
         <div class="kpi-card">
@@ -438,15 +453,101 @@ Views.Operators = (() => {
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.gross)}</span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">Charges</span>
+          <span class="kpi-label">Charges patronales${tauxPatroInfo}</span>
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.charges)}</span>
         </div>
         <div class="kpi-card${status === 'fondateur' ? '' : ' kpi-warning'}">
-          <span class="kpi-label">Coût entreprise</span>
+          <span class="kpi-label">Coût entreprise / jour</span>
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.companyCost)}</span>
         </div>
       </div>
+      ${cddInfo}
     `;
+  }
+
+  /* ----------------------------------------------------------
+     RENDU DÉTAIL CHARGES SOCIALES (dans modale détails)
+     ---------------------------------------------------------- */
+
+  /**
+   * Génère le HTML de ventilation des charges pour un calcul donné.
+   * Utilise le detailComplet retourné par computeCoutComplet.
+   */
+  function _renderDetailChargesHTML(calc, status) {
+    const dc = calc.detailComplet;
+    if (!dc || !dc.details) {
+      // Freelance ou fondateur : pas de charges détaillées côté entreprise
+      if (status === 'freelance' && dc) {
+        return `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);">
+          Facture HT : ${Engine.fmt(dc.factureHT_Jour)} / jour — Charges auto-entrepreneur (${dc.tauxChargesAE}%) à la charge du freelance.
+          <br>Coût pour l'entreprise = facture HT uniquement (aucune charge patronale).
+        </div>`;
+      }
+      if (status === 'fondateur' && dc) {
+        const regime = dc.regime === 'assimileSalarie' ? 'Assimilé salarié' : 'TNS';
+        return `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);">
+          Régime : ${_escape(regime)} — Coût réel estimé : ${Engine.fmt(dc.coutReelJour || 0)} / jour
+          (cotisations ${regime} : ${dc.tauxTNS || 0}%).
+          <br>Non imputé aux sessions (charge fixe de structure).
+        </div>`;
+      }
+      return '';
+    }
+
+    const details = dc.details;
+    const cc = Engine.getChargesConfig();
+    const joursAn = cc.joursOuvresAn || 218;
+
+    // Filtrer les lignes à montant > 0 pour lisibilité
+    const patronalesNonNulles = details.patronales.filter(l => l.montant > 0);
+    const salarialesNonNulles = details.salariales.filter(l => l.montant > 0);
+
+    let html = '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-heading);padding:6px 0;">Ventilation détaillée des charges</summary>';
+    html += '<div style="margin-top:8px;">';
+
+    // CDD specifics
+    if (status === 'cdd' && dc.primePrecariteJour) {
+      html += '<div style="font-size:0.78rem;padding:6px 0;color:var(--color-warning);">Prime précarité : +' + Engine.fmt(dc.primePrecariteJour) + '/jour — Indemnité CP : +' + Engine.fmt(dc.indemniteCP_Jour) + '/jour</div>';
+    }
+
+    // Patronales table
+    html += '<table style="width:100%;font-size:0.75rem;border-collapse:collapse;margin-top:4px;">';
+    html += '<tr style="border-bottom:1px solid var(--border-color);"><td colspan="3" style="font-weight:700;padding:4px 0;color:var(--accent-red-light);">Charges patronales (' + details.totaux.tauxPatronalesEffectif + '% effectif)</td></tr>';
+    patronalesNonNulles.forEach(l => {
+      html += '<tr style="border-bottom:1px solid var(--border-color);">';
+      html += '<td style="padding:3px 0;color:var(--text-secondary);">' + _escape(l.label) + '</td>';
+      html += '<td style="text-align:right;width:55px;color:var(--text-muted);">' + l.taux.toFixed(2) + '%</td>';
+      html += '<td style="text-align:right;width:80px;font-family:var(--font-mono);color:var(--text-primary);">' + Engine.fmt(Engine.round2(l.montant / joursAn)) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700;"><td style="padding:4px 0;">Total patronales</td><td></td><td style="text-align:right;font-family:var(--font-mono);">' + Engine.fmt(dc.chargesPatronalesJour || Engine.round2(details.totaux.chargesPatronales / joursAn)) + '/j</td></tr>';
+    html += '</table>';
+
+    // Salariales table
+    html += '<table style="width:100%;font-size:0.75rem;border-collapse:collapse;margin-top:12px;">';
+    html += '<tr style="border-bottom:1px solid var(--border-color);"><td colspan="3" style="font-weight:700;padding:4px 0;color:var(--color-info);">Charges salariales (' + details.totaux.tauxSalarialesEffectif + '% effectif)</td></tr>';
+    salarialesNonNulles.forEach(l => {
+      html += '<tr style="border-bottom:1px solid var(--border-color);">';
+      html += '<td style="padding:3px 0;color:var(--text-secondary);">' + _escape(l.label) + '</td>';
+      html += '<td style="text-align:right;width:55px;color:var(--text-muted);">' + l.taux.toFixed(2) + '%</td>';
+      html += '<td style="text-align:right;width:80px;font-family:var(--font-mono);color:var(--text-primary);">' + Engine.fmt(Engine.round2(l.montant / joursAn)) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700;"><td style="padding:4px 0;">Total salariales</td><td></td><td style="text-align:right;font-family:var(--font-mono);">' + Engine.fmt(dc.chargesSalarialesJour || Engine.round2(details.totaux.chargesSalariales / joursAn)) + '/j</td></tr>';
+    html += '</table>';
+
+    // Annuel summary
+    html += '<div style="margin-top:12px;padding:8px;background:var(--bg-input);border-radius:6px;font-size:0.78rem;">';
+    html += '<strong>Projection annuelle (' + joursAn + ' jours)</strong><br>';
+    html += 'Brut : ' + Engine.fmt(details.totaux.brutAnnuel) + ' — ';
+    html += 'Ch. patronales : ' + Engine.fmt(details.totaux.chargesPatronales) + ' — ';
+    html += 'Ch. salariales : ' + Engine.fmt(details.totaux.chargesSalariales) + '<br>';
+    html += '<strong>Coût entreprise annuel : ' + Engine.fmt(details.totaux.coutEntreprise) + '</strong> — ';
+    html += 'Net annuel salarié : ' + Engine.fmt(details.totaux.netAnnuel);
+    html += '</div>';
+
+    html += '</div></details>';
+    return html;
   }
 
   /* ----------------------------------------------------------
@@ -540,7 +641,7 @@ Views.Operators = (() => {
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.gross)}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Charges</span>
+                <span class="kpi-label">Charges patronales</span>
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.charges)}</span>
               </div>
               <div class="kpi-card">
@@ -548,6 +649,7 @@ Views.Operators = (() => {
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.companyCost)}</span>
               </div>
             </div>
+            ${_renderDetailChargesHTML(currentCost, op.status)}
           </div>
           ` : ''}
 
@@ -573,14 +675,25 @@ Views.Operators = (() => {
                   cardClass = 'not-recommended';
                 }
                 const isCurrent = item.status === op.status;
+                const dc = item.detailComplet;
+                let detailLine = 'Brut : ' + Engine.fmt(item.gross) + '<br/>Charges patron. : ' + Engine.fmt(item.charges);
+                if (dc && dc.tauxPatronalesEffectif) {
+                  detailLine += '<br/><span style="font-size:0.7rem;">Taux effectif : ' + dc.tauxPatronalesEffectif + '%</span>';
+                }
+                if (dc && item.status === 'cdd' && dc.majorationCDD) {
+                  detailLine += '<br/><span style="font-size:0.7rem;color:var(--color-warning);">dont CDD : +' + Engine.fmt(dc.majorationCDD) + '</span>';
+                }
+                if (dc && item.status === 'interim' && dc.coefficientAgence) {
+                  detailLine += '<br/><span style="font-size:0.7rem;">Coeff. agence : ×' + dc.coefficientAgence + '</span>';
+                }
+                if (dc && item.status === 'freelance') {
+                  detailLine = 'Facture HT : ' + Engine.fmt(dc.factureHT_Jour) + '<br/><span style="font-size:0.7rem;">Charges AE (' + dc.tauxChargesAE + '%) : à sa charge</span>';
+                }
                 return `
                   <div class="comparison-card ${cardClass}" ${isCurrent ? 'style="outline:2px solid var(--color-info);"' : ''}>
                     <div class="comp-label">${item.label}${isCurrent ? ' (actuel)' : ''}</div>
                     <div class="comp-value">${Engine.fmt(item.companyCost)}</div>
-                    <div class="comp-detail">
-                      Brut : ${Engine.fmt(item.gross)}<br/>
-                      Charges : ${Engine.fmt(item.charges)}
-                    </div>
+                    <div class="comp-detail">${detailLine}</div>
                     ${idx === 0 && item.companyCost > 0 ? '<div class="comp-detail" style="margin-top:4px;"><strong style="color:var(--color-success);">Recommandé</strong></div>' : ''}
                     ${item.companyCost === maxCost && maxCost > 0 && idx === comparison.length - 1 ? '<div class="comp-detail" style="margin-top:4px;"><strong style="color:var(--accent-red-light);">Plus coûteux</strong></div>' : ''}
                   </div>

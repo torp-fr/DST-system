@@ -32,7 +32,8 @@ Views.Settings = {
       marginAlertThreshold:     settings.marginAlertThreshold ?? 15,
       vatRate:                  settings.vatRate ?? 20,
       estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
-      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50
+      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50,
+      chargesConfig:            JSON.parse(JSON.stringify(settings.chargesConfig || DB.settings.getDefaults().chargesConfig))
     };
 
     /* ----------------------------------------------------------
@@ -268,7 +269,138 @@ Views.Settings = {
         </div>`;
     }
 
-    /** Section 6 — Types extensibles */
+    /** Section 6 — Barème des charges sociales (détail réel) */
+    function renderChargesSociales() {
+      const cc = state.chargesConfig;
+      if (!cc) return '';
+
+      function renderChargeTable(charges, idPrefix) {
+        return charges.map((c, i) => `
+          <tr>
+            <td style="font-size:0.78rem;max-width:250px;">${escapeHTML(c.label)}</td>
+            <td style="width:90px;">
+              <input type="number" class="form-control text-mono ${idPrefix}-taux"
+                     data-index="${i}" value="${c.taux}" min="0" step="any"
+                     style="padding:4px 6px;font-size:0.82rem;text-align:right;">
+            </td>
+            <td style="font-size:0.72rem;color:var(--text-muted);max-width:150px;">
+              ${c.plafonnee ? 'Plaf. PASS' : c.tranche2 ? 'T2 (>PASS)' : c.assiette9825 ? '×98,25%' : 'Déplaf.'}
+            </td>
+          </tr>`).join('');
+      }
+
+      // Total taux patronales (approx pour info)
+      const totalTxPatro = cc.patronales.reduce((s, c) => s + (c.taux || 0), 0);
+      const totalTxSal = cc.salariales.reduce((s, c) => s + (c.taux || 0), 0);
+
+      return `
+        <div class="card" id="section-charges">
+          <div class="card-header">
+            <h2>Barème des charges sociales</h2>
+            <span class="tag tag-red" style="font-size:0.65rem;">Taux officiels France</span>
+          </div>
+          <p class="form-help mb-16">Ces taux sont utilisés pour le calcul réel du coût entreprise de chaque opérateur. Modifiez-les si les taux évoluent.</p>
+
+          <!-- Paramètres généraux -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-pass">PASS annuel (€)</label>
+              <input type="number" id="cc-pass" class="form-control text-mono" value="${cc.passAnnuel || 47100}" min="0" step="any">
+              <span class="form-help">Plafond Annuel Sécurité Sociale</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-smic">SMIC mensuel brut (€)</label>
+              <input type="number" id="cc-smic" class="form-control text-mono" value="${cc.smicMensuelBrut || 1801.80}" min="0" step="any">
+              <span class="form-help">Pour calcul des taux réduits</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-jours">Jours ouvrés / an</label>
+              <input type="number" id="cc-jours" class="form-control" value="${cc.joursOuvresAn || 218}" min="1" step="any">
+            </div>
+            <div class="form-group">
+              <label for="cc-effectif">Effectif entreprise</label>
+              <select id="cc-effectif" class="form-control">
+                <option value="moins11" ${cc.effectif === 'moins11' ? 'selected' : ''}>Moins de 11 salariés</option>
+                <option value="de11a49" ${cc.effectif === 'de11a49' ? 'selected' : ''}>De 11 à 49 salariés</option>
+                <option value="50etplus" ${cc.effectif === '50etplus' ? 'selected' : ''}>50 salariés et plus</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Charges patronales -->
+          <h3 style="margin:16px 0 8px;font-size:0.88rem;color:var(--text-heading);">
+            Charges patronales
+            <span class="text-muted" style="font-weight:400;font-size:0.75rem;margin-left:8px;">
+              Somme taux : ${totalTxPatro.toFixed(2)} %
+            </span>
+          </h3>
+          <div class="data-table-wrap">
+            <table class="data-table" style="font-size:0.82rem;">
+              <thead>
+                <tr><th>Cotisation</th><th>Taux (%)</th><th>Base</th></tr>
+              </thead>
+              <tbody>${renderChargeTable(cc.patronales, 'cp')}</tbody>
+            </table>
+          </div>
+
+          <!-- Charges salariales -->
+          <h3 style="margin:20px 0 8px;font-size:0.88rem;color:var(--text-heading);">
+            Charges salariales (prélevées sur le brut)
+            <span class="text-muted" style="font-weight:400;font-size:0.75rem;margin-left:8px;">
+              Somme taux : ${totalTxSal.toFixed(2)} %
+            </span>
+          </h3>
+          <div class="data-table-wrap">
+            <table class="data-table" style="font-size:0.82rem;">
+              <thead>
+                <tr><th>Cotisation</th><th>Taux (%)</th><th>Base</th></tr>
+              </thead>
+              <tbody>${renderChargeTable(cc.salariales, 'cs')}</tbody>
+            </table>
+          </div>
+
+          <!-- Spécificités par statut -->
+          <h3 style="margin:20px 0 8px;font-size:0.88rem;color:var(--text-heading);">Spécificités par type de contrat</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-cdd-precarite">CDD — Prime précarité (%)</label>
+              <input type="number" id="cc-cdd-precarite" class="form-control" value="${cc.cdd ? cc.cdd.primePrecarite : 10}" min="0" step="any">
+            </div>
+            <div class="form-group">
+              <label for="cc-cdd-cp">CDD — Indemnité congés payés (%)</label>
+              <input type="number" id="cc-cdd-cp" class="form-control" value="${cc.cdd ? cc.cdd.indemniteCP : 10}" min="0" step="any">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-interim-coeff">Intérim — Coefficient agence</label>
+              <input type="number" id="cc-interim-coeff" class="form-control" value="${cc.interim ? cc.interim.coefficientAgence : 2.0}" min="0" step="any">
+              <span class="form-help">Multiplicateur facture agence sur le brut</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-freelance-taux">Freelance — Taux charges AE (%)</label>
+              <input type="number" id="cc-freelance-taux" class="form-control" value="${cc.freelance ? cc.freelance.tauxCharges : 21.1}" min="0" step="any">
+              <span class="form-help">Auto-entrepreneur BNC prestations de services</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-fondateur-regime">Fondateur — Régime</label>
+              <select id="cc-fondateur-regime" class="form-control">
+                <option value="tns" ${(!cc.fondateur || cc.fondateur.regime === 'tns') ? 'selected' : ''}>TNS (Travailleur Non Salarié)</option>
+                <option value="assimileSalarie" ${(cc.fondateur && cc.fondateur.regime === 'assimileSalarie') ? 'selected' : ''}>Assimilé salarié (SAS/SASU)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cc-fondateur-tns">Fondateur — Taux cotisations TNS (%)</label>
+              <input type="number" id="cc-fondateur-tns" class="form-control" value="${cc.fondateur ? cc.fondateur.tauxTNS : 45}" min="0" step="any">
+              <span class="form-help">Approximation globale des cotisations TNS</span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    /** Section 7 — Types extensibles */
     function renderTypes() {
       /* Types clients — éditable */
       const clientTags = state.clientTypes.map((t, i) => `
@@ -373,6 +505,8 @@ Views.Settings = {
           ${renderTypes()}
         </div>
       </div>
+
+      ${renderChargesSociales()}
 
       ${renderData()}
 
@@ -488,6 +622,51 @@ Views.Settings = {
       // Mettre à jour l'affichage du seuil plancher auto-calculé
       const seuilEl = $('#eco-seuil-plancher');
       if (seuilEl) seuilEl.textContent = Engine.fmt(Engine.calculateSeuilPlancher(state));
+
+      // Synchroniser chargesConfig depuis le DOM
+      syncChargesConfigFromDOM();
+    }
+
+    function syncChargesConfigFromDOM() {
+      const cc = state.chargesConfig;
+      if (!cc) return;
+
+      // Paramètres généraux
+      const elPass = $('#cc-pass');
+      const elSmic = $('#cc-smic');
+      const elJours = $('#cc-jours');
+      const elEffectif = $('#cc-effectif');
+      if (elPass) cc.passAnnuel = parseFloat(elPass.value) || 47100;
+      if (elSmic) cc.smicMensuelBrut = parseFloat(elSmic.value) || 1801.80;
+      if (elJours) cc.joursOuvresAn = parseInt(elJours.value, 10) || 218;
+      if (elEffectif) cc.effectif = elEffectif.value;
+
+      // Taux patronales
+      $$('.cp-taux').forEach(input => {
+        const idx = parseInt(input.dataset.index, 10);
+        if (cc.patronales[idx]) cc.patronales[idx].taux = parseFloat(input.value) || 0;
+      });
+
+      // Taux salariales
+      $$('.cs-taux').forEach(input => {
+        const idx = parseInt(input.dataset.index, 10);
+        if (cc.salariales[idx]) cc.salariales[idx].taux = parseFloat(input.value) || 0;
+      });
+
+      // Spécificités par statut
+      const elCddPrec = $('#cc-cdd-precarite');
+      const elCddCp = $('#cc-cdd-cp');
+      const elIntCoeff = $('#cc-interim-coeff');
+      const elFreelTaux = $('#cc-freelance-taux');
+      const elFondRegime = $('#cc-fondateur-regime');
+      const elFondTNS = $('#cc-fondateur-tns');
+
+      if (elCddPrec && cc.cdd) cc.cdd.primePrecarite = parseFloat(elCddPrec.value) || 10;
+      if (elCddCp && cc.cdd) cc.cdd.indemniteCP = parseFloat(elCddCp.value) || 10;
+      if (elIntCoeff && cc.interim) cc.interim.coefficientAgence = parseFloat(elIntCoeff.value) || 2.0;
+      if (elFreelTaux && cc.freelance) cc.freelance.tauxCharges = parseFloat(elFreelTaux.value) || 21.1;
+      if (elFondRegime && cc.fondateur) cc.fondateur.regime = elFondRegime.value;
+      if (elFondTNS && cc.fondateur) cc.fondateur.tauxTNS = parseFloat(elFondTNS.value) || 45;
     }
 
     /** Synchronise l'intégralité du state depuis les valeurs DOM */
@@ -689,7 +868,8 @@ Views.Settings = {
           marginAlertThreshold:        state.marginAlertThreshold,
           vatRate:                     state.vatRate,
           estimatedAnnualSessions:     state.estimatedAnnualSessions,
-          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel
+          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel,
+          chargesConfig:               state.chargesConfig
         };
 
         DB.settings.update(update);

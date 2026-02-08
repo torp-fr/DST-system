@@ -1371,8 +1371,82 @@ const DB = (() => {
       { label: 'Communication / marketing', amount: 0 },
       { label: 'Autres charges fixes', amount: 0 }
     ],
-    // Taux charges patronales (%)
+    // Taux charges patronales global (legacy, conservé pour rétrocompat)
     employerChargeRate: 45,
+
+    /* ============================================================
+       BARÈME CHARGES SOCIALES — Taux officiels France 2025
+       Chaque ligne est paramétrable par l'utilisateur.
+       ============================================================ */
+    chargesConfig: {
+      // Plafond Annuel de la Sécurité Sociale (2025)
+      passAnnuel: 47100,
+      // SMIC mensuel brut (2025 — 11,88 €/h × 151,67h)
+      smicMensuelBrut: 1801.80,
+      // Jours ouvrés moyens par an
+      joursOuvresAn: 218,
+      // Effectif entreprise : 'moins11' | 'de11a49' | '50etplus'
+      effectif: 'moins11',
+
+      /* --- Charges patronales (sur brut) --- */
+      patronales: [
+        { code: 'maladie',            taux: 13.00, tauxReduit: 7.00,  seuilSmic: 2.5,  label: 'Assurance maladie-maternité-invalidité-décès' },
+        { code: 'vieillessePlaf',     taux: 8.55,  plafonnee: true,  label: 'Assurance vieillesse plafonnée' },
+        { code: 'vieillesseDeplaf',   taux: 2.02,  label: 'Assurance vieillesse déplafonnée' },
+        { code: 'allocFamiliales',    taux: 5.25,  tauxReduit: 3.45, seuilSmic: 3.5,  label: 'Allocations familiales' },
+        { code: 'accidentsTravail',   taux: 1.50,  label: 'Accidents du travail / Maladies pro.' },
+        { code: 'csa',               taux: 0.30,  label: 'Contribution solidarité autonomie (CSA)' },
+        { code: 'assuranceChomage',   taux: 4.05,  label: 'Assurance chômage' },
+        { code: 'ags',               taux: 0.15,  label: 'AGS (garantie des salaires)' },
+        { code: 'retraiteT1',        taux: 4.72,  plafonnee: true,  label: 'Retraite complémentaire AGIRC-ARRCO T1' },
+        { code: 'retraiteT2',        taux: 12.95, tranche2: true,   label: 'Retraite complémentaire AGIRC-ARRCO T2' },
+        { code: 'cegT1',             taux: 1.29,  plafonnee: true,  label: 'CEG (Contribution Équilibre Général) T1' },
+        { code: 'cegT2',             taux: 1.62,  tranche2: true,   label: 'CEG T2' },
+        { code: 'cet',               taux: 0.21,  tranche2: true,   label: 'CET (Contribution Équilibre Technique)' },
+        { code: 'fnal',              taux: 0.10,  plafonnee: true,  label: 'FNAL (Fonds National Aide au Logement)' },
+        { code: 'formationPro',      taux: 0.55,  label: 'Formation professionnelle' },
+        { code: 'taxeApprentissage', taux: 0.68,  label: 'Taxe d\'apprentissage' },
+        { code: 'dialogueSocial',    taux: 0.016, label: 'Contribution au dialogue social' },
+        { code: 'versementMobilite', taux: 0,     label: 'Versement mobilité (transport)' },
+        { code: 'prevoyanceMutuelle',taux: 0,     label: 'Prévoyance / Mutuelle patronale' }
+      ],
+
+      /* --- Charges salariales (prélevées sur brut) --- */
+      salariales: [
+        { code: 'vieillessePlaf',     taux: 6.90,  plafonnee: true,   label: 'Assurance vieillesse plafonnée' },
+        { code: 'vieillesseDeplaf',   taux: 0.40,  label: 'Assurance vieillesse déplafonnée' },
+        { code: 'csgDeductible',      taux: 6.80,  assiette9825: true, label: 'CSG déductible' },
+        { code: 'csgNonDeductible',   taux: 2.40,  assiette9825: true, label: 'CSG non déductible' },
+        { code: 'crds',              taux: 0.50,  assiette9825: true, label: 'CRDS' },
+        { code: 'retraiteT1',        taux: 3.15,  plafonnee: true,   label: 'Retraite complémentaire AGIRC-ARRCO T1' },
+        { code: 'retraiteT2',        taux: 8.64,  tranche2: true,    label: 'Retraite complémentaire AGIRC-ARRCO T2' },
+        { code: 'cegT1',             taux: 0.86,  plafonnee: true,   label: 'CEG T1' },
+        { code: 'cegT2',             taux: 1.08,  tranche2: true,    label: 'CEG T2' },
+        { code: 'cet',               taux: 0.14,  tranche2: true,    label: 'CET' }
+      ],
+
+      /* --- Spécificités CDD --- */
+      cdd: {
+        primePrecarite: 10,    // % du brut total
+        indemniteCP: 10        // % du brut (+ prime précarité)
+      },
+
+      /* --- Spécificités Intérim --- */
+      interim: {
+        coefficientAgence: 2.0 // Coefficient facturé par l'agence
+      },
+
+      /* --- Spécificités Freelance / Auto-entrepreneur --- */
+      freelance: {
+        tauxCharges: 21.1      // % (BNC services libérales 2025)
+      },
+
+      /* --- Spécificités Fondateur --- */
+      fondateur: {
+        regime: 'tns',         // 'tns' | 'assimileSalarie'
+        tauxTNS: 45            // % cotisations TNS approximatif
+      }
+    },
     // Marge cible (%)
     targetMarginPercent: 30,
     // Taux TVA (%)
@@ -1493,52 +1567,385 @@ const Engine = (() => {
   'use strict';
 
   /* ----------------------------------------------------------
-     CALCULS RH — Bidirectionnel
+     CALCULS RH — Barème détaillé des charges sociales françaises
+     ---------------------------------------------------------- */
+
+  /**
+   * Récupère la configuration des charges depuis les paramètres.
+   * Retourne le barème par défaut si absent.
+   */
+  function getChargesConfig(settings) {
+    const s = settings || DB.settings.get();
+    return s.chargesConfig || DB.settings.getDefaults().chargesConfig;
+  }
+
+  /**
+   * Calcule le détail ligne par ligne des charges patronales et salariales
+   * pour un brut annuel donné (salarié CDI / CDD / contrat journalier).
+   *
+   * @param {number} brutAnnuel — salaire brut annuel
+   * @param {object} cc — chargesConfig
+   * @returns {object} { patronales: [...], salariales: [...], totaux: {...} }
+   */
+  function computeChargesDetaillees(brutAnnuel, cc) {
+    const passAnnuel  = cc.passAnnuel || 47100;
+    const smicAnnuel  = (cc.smicMensuelBrut || 1801.80) * 12;
+    const effectif    = cc.effectif || 'moins11';
+
+    // Bases plafonnées
+    const baseT1 = Math.min(brutAnnuel, passAnnuel);
+    const baseT2 = Math.max(brutAnnuel - passAnnuel, 0);
+    const ratioSmic = smicAnnuel > 0 ? brutAnnuel / smicAnnuel : 99;
+
+    const detailPatronales = [];
+    let totalPatronales = 0;
+
+    // --- Charges patronales ---
+    (cc.patronales || []).forEach(function(def) {
+      let taux = def.taux || 0;
+      let base = brutAnnuel;
+      let note = '';
+
+      // Taux réduit si sous seuil SMIC
+      if (def.tauxReduit !== undefined && def.seuilSmic) {
+        if (ratioSmic <= def.seuilSmic) {
+          taux = def.tauxReduit;
+          note = 'Taux réduit (≤' + def.seuilSmic + ' SMIC)';
+        }
+      }
+
+      // FNAL : taux différent si ≥50 salariés
+      if (def.code === 'fnal' && effectif === '50etplus') {
+        taux = 0.50;
+        note = 'Taux ≥50 salariés';
+      }
+
+      // Formation pro : taux différent si ≥11 salariés
+      if (def.code === 'formationPro' && effectif !== 'moins11') {
+        taux = 1.00;
+        note = 'Taux ≥11 salariés';
+      }
+
+      // Plafonnement
+      if (def.plafonnee) {
+        base = baseT1;
+        if (!note) note = 'Plafonné au PASS';
+      } else if (def.tranche2) {
+        base = baseT2;
+        if (base === 0) note = 'N/A (brut ≤ PASS)';
+        else note = note || 'Tranche 2 (au-delà du PASS)';
+      }
+
+      var montant = round2(base * taux / 100);
+      totalPatronales += montant;
+
+      detailPatronales.push({
+        code: def.code, label: def.label, taux: taux,
+        base: round2(base), montant: montant, note: note
+      });
+    });
+
+    // --- Charges salariales ---
+    const detailSalariales = [];
+    let totalSalariales = 0;
+
+    (cc.salariales || []).forEach(function(def) {
+      var base = brutAnnuel;
+      var note = '';
+
+      if (def.assiette9825) {
+        base = round2(brutAnnuel * 0.9825);
+        note = 'Assiette 98,25% du brut';
+      } else if (def.plafonnee) {
+        base = baseT1;
+        note = 'Plafonné au PASS';
+      } else if (def.tranche2) {
+        base = baseT2;
+        if (base === 0) note = 'N/A (brut ≤ PASS)';
+        else note = 'Tranche 2 (au-delà du PASS)';
+      }
+
+      var montant = round2(base * (def.taux || 0) / 100);
+      totalSalariales += montant;
+
+      detailSalariales.push({
+        code: def.code, label: def.label, taux: def.taux || 0,
+        base: round2(base), montant: montant, note: note
+      });
+    });
+
+    var netAnnuel = round2(brutAnnuel - totalSalariales);
+    var coutEntreprise = round2(brutAnnuel + totalPatronales);
+
+    return {
+      patronales: detailPatronales,
+      salariales: detailSalariales,
+      totaux: {
+        brutAnnuel: round2(brutAnnuel),
+        chargesPatronales: round2(totalPatronales),
+        chargesSalariales: round2(totalSalariales),
+        netAnnuel: netAnnuel,
+        coutEntreprise: coutEntreprise,
+        tauxPatronalesEffectif: brutAnnuel > 0 ? round2(totalPatronales / brutAnnuel * 100) : 0,
+        tauxSalarialesEffectif: brutAnnuel > 0 ? round2(totalSalariales / brutAnnuel * 100) : 0
+      }
+    };
+  }
+
+  /**
+   * Calcul itératif : net annuel → brut annuel (salarié).
+   * Inverse de brut - chargesSalariales = net, résolu par convergence.
+   *
+   * @param {number} netAnnuel — salaire net annuel cible
+   * @param {object} cc — chargesConfig
+   * @returns {number} brut annuel
+   */
+  function netToBrutIteratif(netAnnuel, cc) {
+    // Estimation initiale : net / (1 - ~22% charges salariales moyennes)
+    var brut = netAnnuel / 0.78;
+    for (var i = 0; i < 25; i++) {
+      var detail = computeChargesDetaillees(brut, cc);
+      var computedNet = detail.totaux.netAnnuel;
+      var diff = netAnnuel - computedNet;
+      if (Math.abs(diff) < 0.50) break;
+      brut += diff;
+      if (brut < 0) brut = 0;
+    }
+    return round2(brut);
+  }
+
+  /**
+   * Calcul itératif : coût entreprise annuel → brut annuel (salarié).
+   * Inverse de brut + chargesPatronales = coût, résolu par convergence.
+   *
+   * @param {number} coutAnnuel — coût entreprise annuel cible
+   * @param {object} cc — chargesConfig
+   * @returns {number} brut annuel
+   */
+  function coutEntrepriseToBrutIteratif(coutAnnuel, cc) {
+    // Estimation initiale : coût / (1 + ~42% charges patronales moyennes)
+    var brut = coutAnnuel / 1.42;
+    for (var i = 0; i < 25; i++) {
+      var detail = computeChargesDetaillees(brut, cc);
+      var computedCout = detail.totaux.coutEntreprise;
+      var diff = coutAnnuel - computedCout;
+      if (Math.abs(diff) < 0.50) break;
+      brut += diff * 0.7; // facteur d'amortissement pour stabilité
+      if (brut < 0) brut = 0;
+    }
+    return round2(brut);
+  }
+
+  /**
+   * Calcul complet du coût pour un statut donné, avec ventilation détaillée.
+   *
+   * @param {number} netJournalier — net souhaité par jour
+   * @param {string} status — statut contractuel
+   * @param {object} settings — paramètres complets
+   * @returns {object} résultat avec ventilation
+   */
+  function computeCoutComplet(netJournalier, status, settings) {
+    var s = settings || DB.settings.get();
+    var cc = getChargesConfig(s);
+    var joursAn = cc.joursOuvresAn || 218;
+
+    switch (status) {
+
+      case 'cdi':
+      case 'contrat_journalier': {
+        var netAnnuel = netJournalier * joursAn;
+        var brutAnnuel = netToBrutIteratif(netAnnuel, cc);
+        var details = computeChargesDetaillees(brutAnnuel, cc);
+        return {
+          status: status,
+          netJournalier: round2(details.totaux.netAnnuel / joursAn),
+          brutJournalier: round2(brutAnnuel / joursAn),
+          chargesPatronalesJour: round2(details.totaux.chargesPatronales / joursAn),
+          chargesSalarialesJour: round2(details.totaux.chargesSalariales / joursAn),
+          coutEntrepriseJour: round2(details.totaux.coutEntreprise / joursAn),
+          tauxPatronalesEffectif: details.totaux.tauxPatronalesEffectif,
+          tauxSalarialesEffectif: details.totaux.tauxSalarialesEffectif,
+          annuel: details.totaux,
+          details: details
+        };
+      }
+
+      case 'cdd': {
+        var netAnnuelCDD = netJournalier * joursAn;
+        var brutBaseCDD = netToBrutIteratif(netAnnuelCDD, cc);
+        // Prime précarité sur brut de base
+        var txPrecarite = (cc.cdd && cc.cdd.primePrecarite) || 10;
+        var txCP = (cc.cdd && cc.cdd.indemniteCP) || 10;
+        var primePrecarite = round2(brutBaseCDD * txPrecarite / 100);
+        var indemniteCP = round2((brutBaseCDD + primePrecarite) * txCP / 100);
+        // Brut total chargeable
+        var brutTotalCDD = brutBaseCDD + primePrecarite + indemniteCP;
+        var detailsCDD = computeChargesDetaillees(brutTotalCDD, cc);
+        return {
+          status: 'cdd',
+          netJournalier: round2(netJournalier),
+          brutBaseJour: round2(brutBaseCDD / joursAn),
+          primePrecariteJour: round2(primePrecarite / joursAn),
+          indemniteCP_Jour: round2(indemniteCP / joursAn),
+          brutTotalJour: round2(brutTotalCDD / joursAn),
+          chargesPatronalesJour: round2(detailsCDD.totaux.chargesPatronales / joursAn),
+          chargesSalarialesJour: round2(detailsCDD.totaux.chargesSalariales / joursAn),
+          coutEntrepriseJour: round2(detailsCDD.totaux.coutEntreprise / joursAn),
+          tauxPatronalesEffectif: detailsCDD.totaux.tauxPatronalesEffectif,
+          majorationCDD: round2((primePrecarite + indemniteCP) / joursAn),
+          annuel: {
+            brutBase: round2(brutBaseCDD),
+            primePrecarite: primePrecarite,
+            indemniteCP: indemniteCP,
+            brutTotal: round2(brutTotalCDD),
+            chargesPatronales: detailsCDD.totaux.chargesPatronales,
+            chargesSalariales: detailsCDD.totaux.chargesSalariales,
+            coutEntreprise: detailsCDD.totaux.coutEntreprise
+          },
+          details: detailsCDD
+        };
+      }
+
+      case 'interim': {
+        // L'entreprise paie la facture de l'agence d'intérim
+        // L'agence facture : brut × coefficient (qui couvre salaire + charges + marge agence)
+        var netAnnuelInt = netJournalier * joursAn;
+        var brutBaseInt = netToBrutIteratif(netAnnuelInt, cc);
+        var coeffAgence = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        var factureAgenceAn = round2(brutBaseInt * coeffAgence);
+        // Détail indicatif : ce que l'agence supporte
+        var detailsInt = computeChargesDetaillees(brutBaseInt, cc);
+        return {
+          status: 'interim',
+          netJournalier: round2(netJournalier),
+          brutJournalier: round2(brutBaseInt / joursAn),
+          coefficientAgence: coeffAgence,
+          factureAgenceJour: round2(factureAgenceAn / joursAn),
+          coutEntrepriseJour: round2(factureAgenceAn / joursAn),
+          chargesEstimeesAgence: round2(detailsInt.totaux.chargesPatronales / joursAn),
+          margeAgenceEstimee: round2((factureAgenceAn - detailsInt.totaux.coutEntreprise) / joursAn),
+          annuel: {
+            brutBase: round2(brutBaseInt),
+            factureAgence: factureAgenceAn,
+            coutEntreprise: factureAgenceAn
+          },
+          details: detailsInt
+        };
+      }
+
+      case 'freelance': {
+        // Freelance/auto-entrepreneur : facture HT = net / (1 - taux charges AE)
+        var tauxAE = (cc.freelance && cc.freelance.tauxCharges) || 21.1;
+        var factureHT = round2(netJournalier / (1 - tauxAE / 100));
+        return {
+          status: 'freelance',
+          netJournalier: round2(netJournalier),
+          factureHT_Jour: factureHT,
+          chargesAutoEntrepreneur: round2(factureHT * tauxAE / 100),
+          tauxChargesAE: tauxAE,
+          coutEntrepriseJour: factureHT,
+          annuel: {
+            factureHT: round2(factureHT * joursAn),
+            coutEntreprise: round2(factureHT * joursAn)
+          },
+          details: null // Pas de charges patronales pour l'entreprise
+        };
+      }
+
+      case 'fondateur': {
+        // Fondateur : coût 0 pour les sessions (rémunération = charge fixe)
+        // Mais on peut calculer le coût réel TNS si demandé
+        var regimeFond = (cc.fondateur && cc.fondateur.regime) || 'tns';
+        if (regimeFond === 'assimileSalarie') {
+          var resultAS = computeCoutComplet(netJournalier, 'cdi', s);
+          resultAS.status = 'fondateur';
+          resultAS.regime = 'assimileSalarie';
+          resultAS.coutSessionJour = 0; // Pas imputé aux sessions
+          return resultAS;
+        }
+        var tauxTNS = (cc.fondateur && cc.fondateur.tauxTNS) || 45;
+        var cotisationsTNS = round2(netJournalier * tauxTNS / 100);
+        return {
+          status: 'fondateur',
+          regime: 'tns',
+          netJournalier: round2(netJournalier),
+          cotisationsTNS_Jour: cotisationsTNS,
+          coutReelJour: round2(netJournalier + cotisationsTNS),
+          coutEntrepriseJour: 0, // Non imputé aux sessions
+          coutSessionJour: 0,
+          tauxTNS: tauxTNS,
+          annuel: {
+            netAnnuel: round2(netJournalier * joursAn),
+            cotisationsTNS: round2(cotisationsTNS * joursAn),
+            coutReel: round2((netJournalier + cotisationsTNS) * joursAn)
+          },
+          details: null
+        };
+      }
+
+      default:
+        return {
+          status: status, netJournalier: netJournalier,
+          coutEntrepriseJour: netJournalier,
+          details: null
+        };
+    }
+  }
+
+  /* ----------------------------------------------------------
+     FONCTIONS PUBLIQUES EXISTANTES — Rétrocompatibles
+     Utilisent maintenant le calcul détaillé en interne.
      ---------------------------------------------------------- */
 
   /**
    * Calcul du coût entreprise à partir du net souhaité par l'opérateur.
-   * net → brut → brut + charges patronales = coût entreprise
+   * Interface inchangée : retourne { net, gross, charges, companyCost }
+   * + propriété « detailComplet » avec la ventilation complète.
    */
   function netToCompanyCost(netDaily, status, settings) {
-    const s = settings || DB.settings.get();
+    var s = settings || DB.settings.get();
+    var complet = computeCoutComplet(netDaily, status, s);
+
+    // Adapter au format historique { net, gross, charges, companyCost }
     switch (status) {
-      case 'freelance': {
-        // Freelance : facture TTC, le net est son prix HT
-        // Le coût entreprise = net + charges estimées freelance
-        const rate = s.freelanceChargeRate / 100;
+      case 'freelance':
         return {
           net: netDaily,
-          gross: netDaily / (1 - rate),
-          charges: (netDaily / (1 - rate)) - netDaily,
-          companyCost: netDaily / (1 - rate)
+          gross: complet.factureHT_Jour,
+          charges: complet.chargesAutoEntrepreneur,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
         };
-      }
-      case 'interim': {
-        // Intérim : coefficient appliqué sur le brut
-        const chargeRate = s.employerChargeRate / 100;
-        const gross = netDaily / (1 - 0.23); // ~23% salariales estimées
-        const baseCost = gross * (1 + chargeRate);
-        const companyCost = baseCost * s.interimCoefficient;
-        return { net: netDaily, gross: round2(gross), charges: round2(companyCost - gross), companyCost: round2(companyCost) };
-      }
-      case 'contrat_journalier':
+      case 'interim':
+        return {
+          net: netDaily,
+          gross: complet.brutJournalier,
+          charges: round2(complet.coutEntrepriseJour - complet.brutJournalier),
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
+        };
       case 'cdd':
-      case 'cdi': {
-        const chargeRate = s.employerChargeRate / 100;
-        const gross = netDaily / (1 - 0.23);
-        const companyCost = gross * (1 + chargeRate);
-        // CDD : prime précarité 10% + congés payés 10%
-        const cddMult = status === 'cdd' ? 1.20 : 1.0;
         return {
           net: netDaily,
-          gross: round2(gross),
-          charges: round2(gross * chargeRate * cddMult),
-          companyCost: round2(companyCost * cddMult)
+          gross: complet.brutTotalJour,
+          charges: complet.chargesPatronalesJour,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
         };
-      }
+      case 'cdi':
+      case 'contrat_journalier':
+        return {
+          net: complet.netJournalier,
+          gross: complet.brutJournalier,
+          charges: complet.chargesPatronalesJour,
+          companyCost: complet.coutEntrepriseJour,
+          detailComplet: complet
+        };
       case 'fondateur':
-        return { net: netDaily, gross: netDaily, charges: 0, companyCost: 0 };
+        return {
+          net: netDaily, gross: netDaily, charges: 0, companyCost: 0,
+          detailComplet: complet
+        };
       default:
         return { net: netDaily, gross: netDaily, charges: 0, companyCost: netDaily };
     }
@@ -1546,31 +1953,52 @@ const Engine = (() => {
 
   /**
    * Calcul du net à partir d'un coût max entreprise.
-   * coût entreprise → brut → net
+   * Interface inchangée + « detailComplet ».
    */
   function companyCostToNet(maxCost, status, settings) {
-    const s = settings || DB.settings.get();
+    var s = settings || DB.settings.get();
+    var cc = getChargesConfig(s);
+    var joursAn = cc.joursOuvresAn || 218;
+
     switch (status) {
       case 'freelance': {
-        const rate = s.freelanceChargeRate / 100;
-        const net = maxCost * (1 - rate);
-        return { net: round2(net), gross: maxCost, charges: round2(maxCost - net), companyCost: maxCost };
+        var tauxAE = (cc.freelance && cc.freelance.tauxCharges) || 21.1;
+        var net = round2(maxCost * (1 - tauxAE / 100));
+        return { net: net, gross: maxCost, charges: round2(maxCost - net), companyCost: maxCost };
       }
       case 'interim': {
-        const chargeRate = s.employerChargeRate / 100;
-        const baseCost = maxCost / s.interimCoefficient;
-        const gross = baseCost / (1 + chargeRate);
-        const net = gross * (1 - 0.23);
-        return { net: round2(net), gross: round2(gross), charges: round2(maxCost - gross), companyCost: maxCost };
+        var coeffAg = (cc.interim && cc.interim.coefficientAgence) || 2.0;
+        var coutAn = maxCost * joursAn;
+        var brutBaseAn = round2(coutAn / coeffAg);
+        var detailInt = computeChargesDetaillees(brutBaseAn, cc);
+        var netInt = round2(detailInt.totaux.netAnnuel / joursAn);
+        return { net: netInt, gross: round2(brutBaseAn / joursAn), charges: round2(maxCost - brutBaseAn / joursAn), companyCost: maxCost };
       }
-      case 'contrat_journalier':
-      case 'cdd':
-      case 'cdi': {
-        const chargeRate = s.employerChargeRate / 100;
-        const cddMult = status === 'cdd' ? 1.20 : 1.0;
-        const gross = maxCost / ((1 + chargeRate) * cddMult);
-        const net = gross * (1 - 0.23);
-        return { net: round2(net), gross: round2(gross), charges: round2(maxCost - gross), companyCost: maxCost };
+      case 'cdd': {
+        // coûtEntreprise = brutTotal + chargesPatronales(brutTotal)
+        // brutTotal = brutBase + primePrecarite + indemniteCP
+        var txPrec = (cc.cdd && cc.cdd.primePrecarite) || 10;
+        var txCPcdd = (cc.cdd && cc.cdd.indemniteCP) || 10;
+        var coutAnCDD = maxCost * joursAn;
+        var brutTotCDD = coutEntrepriseToBrutIteratif(coutAnCDD, cc);
+        // brutTotal = brutBase × (1 + txPrec/100) × (1 + txCP/100) approx
+        var multCDD = (1 + txPrec / 100) * (1 + txCPcdd / 100);
+        var brutBaseCDD = round2(brutTotCDD / multCDD);
+        var detailCDD = computeChargesDetaillees(brutBaseCDD, cc);
+        var netCDD = round2(detailCDD.totaux.netAnnuel / joursAn);
+        return { net: netCDD, gross: round2(brutTotCDD / joursAn), charges: round2(maxCost - brutTotCDD / joursAn), companyCost: maxCost };
+      }
+      case 'cdi':
+      case 'contrat_journalier': {
+        var coutAnnuelSal = maxCost * joursAn;
+        var brutAnnuelSal = coutEntrepriseToBrutIteratif(coutAnnuelSal, cc);
+        var detailSal = computeChargesDetaillees(brutAnnuelSal, cc);
+        return {
+          net: round2(detailSal.totaux.netAnnuel / joursAn),
+          gross: round2(brutAnnuelSal / joursAn),
+          charges: round2(detailSal.totaux.chargesPatronales / joursAn),
+          companyCost: maxCost
+        };
       }
       case 'fondateur':
         return { net: maxCost, gross: maxCost, charges: 0, companyCost: 0 };
@@ -1581,16 +2009,24 @@ const Engine = (() => {
 
   /**
    * Compare tous les statuts pour un objectif net donné.
-   * Retourne un tableau trié par coût entreprise croissant.
+   * Retourne un tableau trié par coût entreprise croissant,
+   * enrichi du détail complet par statut.
    */
   function compareAllStatuses(netDaily, settings) {
-    const s = settings || DB.settings.get();
-    const statuses = ['freelance', 'interim', 'contrat_journalier', 'cdd', 'cdi'];
-    return statuses.map(status => ({
-      status,
-      label: statusLabel(status),
-      ...netToCompanyCost(netDaily, status, s)
-    })).sort((a, b) => a.companyCost - b.companyCost);
+    var s = settings || DB.settings.get();
+    var statuses = ['freelance', 'interim', 'contrat_journalier', 'cdd', 'cdi'];
+    return statuses.map(function(status) {
+      var calc = netToCompanyCost(netDaily, status, s);
+      return {
+        status: status,
+        label: statusLabel(status),
+        net: calc.net,
+        gross: calc.gross,
+        charges: calc.charges,
+        companyCost: calc.companyCost,
+        detailComplet: calc.detailComplet || null
+      };
+    }).sort(function(a, b) { return a.companyCost - b.companyCost; });
   }
 
   /* ----------------------------------------------------------
@@ -2213,6 +2649,12 @@ const Engine = (() => {
     calculateSeuilPlancher,
     calculatePointMort,
     calculateTresorerie,
+    // Nouvelles fonctions — calcul détaillé charges sociales
+    getChargesConfig,
+    computeChargesDetaillees,
+    netToBrutIteratif,
+    coutEntrepriseToBrutIteratif,
+    computeCoutComplet,
     round2,
     fmt,
     fmtPercent,
@@ -6267,6 +6709,21 @@ Views.Operators = (() => {
 
     if (!calc) { preview.innerHTML = ''; return; }
 
+    // Taux patronales effectif
+    const dc = calc.detailComplet;
+    const tauxPatroInfo = dc && dc.tauxPatronalesEffectif
+      ? ' <span style="font-size:0.7rem;color:var(--text-muted);">(' + dc.tauxPatronalesEffectif + '% eff.)</span>'
+      : '';
+    const tauxSalInfo = dc && dc.tauxSalarialesEffectif
+      ? ' <span style="font-size:0.7rem;color:var(--text-muted);">(' + dc.tauxSalarialesEffectif + '% eff.)</span>'
+      : '';
+
+    // Infos spécifiques CDD
+    let cddInfo = '';
+    if (dc && status === 'cdd' && dc.majorationCDD) {
+      cddInfo = '<div style="font-size:0.75rem;color:var(--color-warning);margin-top:8px;">Majoration CDD (précarité + CP) : +' + Engine.fmt(dc.majorationCDD) + '/jour</div>';
+    }
+
     preview.innerHTML = `
       <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
         <div class="kpi-card">
@@ -6278,15 +6735,101 @@ Views.Operators = (() => {
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.gross)}</span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">Charges</span>
+          <span class="kpi-label">Charges patronales${tauxPatroInfo}</span>
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.charges)}</span>
         </div>
         <div class="kpi-card${status === 'fondateur' ? '' : ' kpi-warning'}">
-          <span class="kpi-label">Coût entreprise</span>
+          <span class="kpi-label">Coût entreprise / jour</span>
           <span class="kpi-value" style="font-size:1.2rem;">${Engine.fmt(calc.companyCost)}</span>
         </div>
       </div>
+      ${cddInfo}
     `;
+  }
+
+  /* ----------------------------------------------------------
+     RENDU DÉTAIL CHARGES SOCIALES (dans modale détails)
+     ---------------------------------------------------------- */
+
+  /**
+   * Génère le HTML de ventilation des charges pour un calcul donné.
+   * Utilise le detailComplet retourné par computeCoutComplet.
+   */
+  function _renderDetailChargesHTML(calc, status) {
+    const dc = calc.detailComplet;
+    if (!dc || !dc.details) {
+      // Freelance ou fondateur : pas de charges détaillées côté entreprise
+      if (status === 'freelance' && dc) {
+        return `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);">
+          Facture HT : ${Engine.fmt(dc.factureHT_Jour)} / jour — Charges auto-entrepreneur (${dc.tauxChargesAE}%) à la charge du freelance.
+          <br>Coût pour l'entreprise = facture HT uniquement (aucune charge patronale).
+        </div>`;
+      }
+      if (status === 'fondateur' && dc) {
+        const regime = dc.regime === 'assimileSalarie' ? 'Assimilé salarié' : 'TNS';
+        return `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);">
+          Régime : ${_escape(regime)} — Coût réel estimé : ${Engine.fmt(dc.coutReelJour || 0)} / jour
+          (cotisations ${regime} : ${dc.tauxTNS || 0}%).
+          <br>Non imputé aux sessions (charge fixe de structure).
+        </div>`;
+      }
+      return '';
+    }
+
+    const details = dc.details;
+    const cc = Engine.getChargesConfig();
+    const joursAn = cc.joursOuvresAn || 218;
+
+    // Filtrer les lignes à montant > 0 pour lisibilité
+    const patronalesNonNulles = details.patronales.filter(l => l.montant > 0);
+    const salarialesNonNulles = details.salariales.filter(l => l.montant > 0);
+
+    let html = '<details style="margin-top:12px;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-heading);padding:6px 0;">Ventilation détaillée des charges</summary>';
+    html += '<div style="margin-top:8px;">';
+
+    // CDD specifics
+    if (status === 'cdd' && dc.primePrecariteJour) {
+      html += '<div style="font-size:0.78rem;padding:6px 0;color:var(--color-warning);">Prime précarité : +' + Engine.fmt(dc.primePrecariteJour) + '/jour — Indemnité CP : +' + Engine.fmt(dc.indemniteCP_Jour) + '/jour</div>';
+    }
+
+    // Patronales table
+    html += '<table style="width:100%;font-size:0.75rem;border-collapse:collapse;margin-top:4px;">';
+    html += '<tr style="border-bottom:1px solid var(--border-color);"><td colspan="3" style="font-weight:700;padding:4px 0;color:var(--accent-red-light);">Charges patronales (' + details.totaux.tauxPatronalesEffectif + '% effectif)</td></tr>';
+    patronalesNonNulles.forEach(l => {
+      html += '<tr style="border-bottom:1px solid var(--border-color);">';
+      html += '<td style="padding:3px 0;color:var(--text-secondary);">' + _escape(l.label) + '</td>';
+      html += '<td style="text-align:right;width:55px;color:var(--text-muted);">' + l.taux.toFixed(2) + '%</td>';
+      html += '<td style="text-align:right;width:80px;font-family:var(--font-mono);color:var(--text-primary);">' + Engine.fmt(Engine.round2(l.montant / joursAn)) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700;"><td style="padding:4px 0;">Total patronales</td><td></td><td style="text-align:right;font-family:var(--font-mono);">' + Engine.fmt(dc.chargesPatronalesJour || Engine.round2(details.totaux.chargesPatronales / joursAn)) + '/j</td></tr>';
+    html += '</table>';
+
+    // Salariales table
+    html += '<table style="width:100%;font-size:0.75rem;border-collapse:collapse;margin-top:12px;">';
+    html += '<tr style="border-bottom:1px solid var(--border-color);"><td colspan="3" style="font-weight:700;padding:4px 0;color:var(--color-info);">Charges salariales (' + details.totaux.tauxSalarialesEffectif + '% effectif)</td></tr>';
+    salarialesNonNulles.forEach(l => {
+      html += '<tr style="border-bottom:1px solid var(--border-color);">';
+      html += '<td style="padding:3px 0;color:var(--text-secondary);">' + _escape(l.label) + '</td>';
+      html += '<td style="text-align:right;width:55px;color:var(--text-muted);">' + l.taux.toFixed(2) + '%</td>';
+      html += '<td style="text-align:right;width:80px;font-family:var(--font-mono);color:var(--text-primary);">' + Engine.fmt(Engine.round2(l.montant / joursAn)) + '</td>';
+      html += '</tr>';
+    });
+    html += '<tr style="font-weight:700;"><td style="padding:4px 0;">Total salariales</td><td></td><td style="text-align:right;font-family:var(--font-mono);">' + Engine.fmt(dc.chargesSalarialesJour || Engine.round2(details.totaux.chargesSalariales / joursAn)) + '/j</td></tr>';
+    html += '</table>';
+
+    // Annuel summary
+    html += '<div style="margin-top:12px;padding:8px;background:var(--bg-input);border-radius:6px;font-size:0.78rem;">';
+    html += '<strong>Projection annuelle (' + joursAn + ' jours)</strong><br>';
+    html += 'Brut : ' + Engine.fmt(details.totaux.brutAnnuel) + ' — ';
+    html += 'Ch. patronales : ' + Engine.fmt(details.totaux.chargesPatronales) + ' — ';
+    html += 'Ch. salariales : ' + Engine.fmt(details.totaux.chargesSalariales) + '<br>';
+    html += '<strong>Coût entreprise annuel : ' + Engine.fmt(details.totaux.coutEntreprise) + '</strong> — ';
+    html += 'Net annuel salarié : ' + Engine.fmt(details.totaux.netAnnuel);
+    html += '</div>';
+
+    html += '</div></details>';
+    return html;
   }
 
   /* ----------------------------------------------------------
@@ -6380,7 +6923,7 @@ Views.Operators = (() => {
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.gross)}</span>
               </div>
               <div class="kpi-card">
-                <span class="kpi-label">Charges</span>
+                <span class="kpi-label">Charges patronales</span>
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.charges)}</span>
               </div>
               <div class="kpi-card">
@@ -6388,6 +6931,7 @@ Views.Operators = (() => {
                 <span class="kpi-value" style="font-size:1.3rem;">${Engine.fmt(currentCost.companyCost)}</span>
               </div>
             </div>
+            ${_renderDetailChargesHTML(currentCost, op.status)}
           </div>
           ` : ''}
 
@@ -6413,14 +6957,25 @@ Views.Operators = (() => {
                   cardClass = 'not-recommended';
                 }
                 const isCurrent = item.status === op.status;
+                const dc = item.detailComplet;
+                let detailLine = 'Brut : ' + Engine.fmt(item.gross) + '<br/>Charges patron. : ' + Engine.fmt(item.charges);
+                if (dc && dc.tauxPatronalesEffectif) {
+                  detailLine += '<br/><span style="font-size:0.7rem;">Taux effectif : ' + dc.tauxPatronalesEffectif + '%</span>';
+                }
+                if (dc && item.status === 'cdd' && dc.majorationCDD) {
+                  detailLine += '<br/><span style="font-size:0.7rem;color:var(--color-warning);">dont CDD : +' + Engine.fmt(dc.majorationCDD) + '</span>';
+                }
+                if (dc && item.status === 'interim' && dc.coefficientAgence) {
+                  detailLine += '<br/><span style="font-size:0.7rem;">Coeff. agence : ×' + dc.coefficientAgence + '</span>';
+                }
+                if (dc && item.status === 'freelance') {
+                  detailLine = 'Facture HT : ' + Engine.fmt(dc.factureHT_Jour) + '<br/><span style="font-size:0.7rem;">Charges AE (' + dc.tauxChargesAE + '%) : à sa charge</span>';
+                }
                 return `
                   <div class="comparison-card ${cardClass}" ${isCurrent ? 'style="outline:2px solid var(--color-info);"' : ''}>
                     <div class="comp-label">${item.label}${isCurrent ? ' (actuel)' : ''}</div>
                     <div class="comp-value">${Engine.fmt(item.companyCost)}</div>
-                    <div class="comp-detail">
-                      Brut : ${Engine.fmt(item.gross)}<br/>
-                      Charges : ${Engine.fmt(item.charges)}
-                    </div>
+                    <div class="comp-detail">${detailLine}</div>
                     ${idx === 0 && item.companyCost > 0 ? '<div class="comp-detail" style="margin-top:4px;"><strong style="color:var(--color-success);">Recommandé</strong></div>' : ''}
                     ${item.companyCost === maxCost && maxCost > 0 && idx === comparison.length - 1 ? '<div class="comp-detail" style="margin-top:4px;"><strong style="color:var(--accent-red-light);">Plus coûteux</strong></div>' : ''}
                   </div>
@@ -7994,7 +8549,8 @@ Views.Settings = {
       marginAlertThreshold:     settings.marginAlertThreshold ?? 15,
       vatRate:                  settings.vatRate ?? 20,
       estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
-      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50
+      nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50,
+      chargesConfig:            JSON.parse(JSON.stringify(settings.chargesConfig || DB.settings.getDefaults().chargesConfig))
     };
 
     /* ----------------------------------------------------------
@@ -8230,7 +8786,138 @@ Views.Settings = {
         </div>`;
     }
 
-    /** Section 6 — Types extensibles */
+    /** Section 6 — Barème des charges sociales (détail réel) */
+    function renderChargesSociales() {
+      const cc = state.chargesConfig;
+      if (!cc) return '';
+
+      function renderChargeTable(charges, idPrefix) {
+        return charges.map((c, i) => `
+          <tr>
+            <td style="font-size:0.78rem;max-width:250px;">${escapeHTML(c.label)}</td>
+            <td style="width:90px;">
+              <input type="number" class="form-control text-mono ${idPrefix}-taux"
+                     data-index="${i}" value="${c.taux}" min="0" step="any"
+                     style="padding:4px 6px;font-size:0.82rem;text-align:right;">
+            </td>
+            <td style="font-size:0.72rem;color:var(--text-muted);max-width:150px;">
+              ${c.plafonnee ? 'Plaf. PASS' : c.tranche2 ? 'T2 (>PASS)' : c.assiette9825 ? '×98,25%' : 'Déplaf.'}
+            </td>
+          </tr>`).join('');
+      }
+
+      // Total taux patronales (approx pour info)
+      const totalTxPatro = cc.patronales.reduce((s, c) => s + (c.taux || 0), 0);
+      const totalTxSal = cc.salariales.reduce((s, c) => s + (c.taux || 0), 0);
+
+      return `
+        <div class="card" id="section-charges">
+          <div class="card-header">
+            <h2>Barème des charges sociales</h2>
+            <span class="tag tag-red" style="font-size:0.65rem;">Taux officiels France</span>
+          </div>
+          <p class="form-help mb-16">Ces taux sont utilisés pour le calcul réel du coût entreprise de chaque opérateur. Modifiez-les si les taux évoluent.</p>
+
+          <!-- Paramètres généraux -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-pass">PASS annuel (€)</label>
+              <input type="number" id="cc-pass" class="form-control text-mono" value="${cc.passAnnuel || 47100}" min="0" step="any">
+              <span class="form-help">Plafond Annuel Sécurité Sociale</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-smic">SMIC mensuel brut (€)</label>
+              <input type="number" id="cc-smic" class="form-control text-mono" value="${cc.smicMensuelBrut || 1801.80}" min="0" step="any">
+              <span class="form-help">Pour calcul des taux réduits</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-jours">Jours ouvrés / an</label>
+              <input type="number" id="cc-jours" class="form-control" value="${cc.joursOuvresAn || 218}" min="1" step="any">
+            </div>
+            <div class="form-group">
+              <label for="cc-effectif">Effectif entreprise</label>
+              <select id="cc-effectif" class="form-control">
+                <option value="moins11" ${cc.effectif === 'moins11' ? 'selected' : ''}>Moins de 11 salariés</option>
+                <option value="de11a49" ${cc.effectif === 'de11a49' ? 'selected' : ''}>De 11 à 49 salariés</option>
+                <option value="50etplus" ${cc.effectif === '50etplus' ? 'selected' : ''}>50 salariés et plus</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Charges patronales -->
+          <h3 style="margin:16px 0 8px;font-size:0.88rem;color:var(--text-heading);">
+            Charges patronales
+            <span class="text-muted" style="font-weight:400;font-size:0.75rem;margin-left:8px;">
+              Somme taux : ${totalTxPatro.toFixed(2)} %
+            </span>
+          </h3>
+          <div class="data-table-wrap">
+            <table class="data-table" style="font-size:0.82rem;">
+              <thead>
+                <tr><th>Cotisation</th><th>Taux (%)</th><th>Base</th></tr>
+              </thead>
+              <tbody>${renderChargeTable(cc.patronales, 'cp')}</tbody>
+            </table>
+          </div>
+
+          <!-- Charges salariales -->
+          <h3 style="margin:20px 0 8px;font-size:0.88rem;color:var(--text-heading);">
+            Charges salariales (prélevées sur le brut)
+            <span class="text-muted" style="font-weight:400;font-size:0.75rem;margin-left:8px;">
+              Somme taux : ${totalTxSal.toFixed(2)} %
+            </span>
+          </h3>
+          <div class="data-table-wrap">
+            <table class="data-table" style="font-size:0.82rem;">
+              <thead>
+                <tr><th>Cotisation</th><th>Taux (%)</th><th>Base</th></tr>
+              </thead>
+              <tbody>${renderChargeTable(cc.salariales, 'cs')}</tbody>
+            </table>
+          </div>
+
+          <!-- Spécificités par statut -->
+          <h3 style="margin:20px 0 8px;font-size:0.88rem;color:var(--text-heading);">Spécificités par type de contrat</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-cdd-precarite">CDD — Prime précarité (%)</label>
+              <input type="number" id="cc-cdd-precarite" class="form-control" value="${cc.cdd ? cc.cdd.primePrecarite : 10}" min="0" step="any">
+            </div>
+            <div class="form-group">
+              <label for="cc-cdd-cp">CDD — Indemnité congés payés (%)</label>
+              <input type="number" id="cc-cdd-cp" class="form-control" value="${cc.cdd ? cc.cdd.indemniteCP : 10}" min="0" step="any">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-interim-coeff">Intérim — Coefficient agence</label>
+              <input type="number" id="cc-interim-coeff" class="form-control" value="${cc.interim ? cc.interim.coefficientAgence : 2.0}" min="0" step="any">
+              <span class="form-help">Multiplicateur facture agence sur le brut</span>
+            </div>
+            <div class="form-group">
+              <label for="cc-freelance-taux">Freelance — Taux charges AE (%)</label>
+              <input type="number" id="cc-freelance-taux" class="form-control" value="${cc.freelance ? cc.freelance.tauxCharges : 21.1}" min="0" step="any">
+              <span class="form-help">Auto-entrepreneur BNC prestations de services</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="cc-fondateur-regime">Fondateur — Régime</label>
+              <select id="cc-fondateur-regime" class="form-control">
+                <option value="tns" ${(!cc.fondateur || cc.fondateur.regime === 'tns') ? 'selected' : ''}>TNS (Travailleur Non Salarié)</option>
+                <option value="assimileSalarie" ${(cc.fondateur && cc.fondateur.regime === 'assimileSalarie') ? 'selected' : ''}>Assimilé salarié (SAS/SASU)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="cc-fondateur-tns">Fondateur — Taux cotisations TNS (%)</label>
+              <input type="number" id="cc-fondateur-tns" class="form-control" value="${cc.fondateur ? cc.fondateur.tauxTNS : 45}" min="0" step="any">
+              <span class="form-help">Approximation globale des cotisations TNS</span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    /** Section 7 — Types extensibles */
     function renderTypes() {
       /* Types clients — éditable */
       const clientTags = state.clientTypes.map((t, i) => `
@@ -8335,6 +9022,8 @@ Views.Settings = {
           ${renderTypes()}
         </div>
       </div>
+
+      ${renderChargesSociales()}
 
       ${renderData()}
 
@@ -8450,6 +9139,51 @@ Views.Settings = {
       // Mettre à jour l'affichage du seuil plancher auto-calculé
       const seuilEl = $('#eco-seuil-plancher');
       if (seuilEl) seuilEl.textContent = Engine.fmt(Engine.calculateSeuilPlancher(state));
+
+      // Synchroniser chargesConfig depuis le DOM
+      syncChargesConfigFromDOM();
+    }
+
+    function syncChargesConfigFromDOM() {
+      const cc = state.chargesConfig;
+      if (!cc) return;
+
+      // Paramètres généraux
+      const elPass = $('#cc-pass');
+      const elSmic = $('#cc-smic');
+      const elJours = $('#cc-jours');
+      const elEffectif = $('#cc-effectif');
+      if (elPass) cc.passAnnuel = parseFloat(elPass.value) || 47100;
+      if (elSmic) cc.smicMensuelBrut = parseFloat(elSmic.value) || 1801.80;
+      if (elJours) cc.joursOuvresAn = parseInt(elJours.value, 10) || 218;
+      if (elEffectif) cc.effectif = elEffectif.value;
+
+      // Taux patronales
+      $$('.cp-taux').forEach(input => {
+        const idx = parseInt(input.dataset.index, 10);
+        if (cc.patronales[idx]) cc.patronales[idx].taux = parseFloat(input.value) || 0;
+      });
+
+      // Taux salariales
+      $$('.cs-taux').forEach(input => {
+        const idx = parseInt(input.dataset.index, 10);
+        if (cc.salariales[idx]) cc.salariales[idx].taux = parseFloat(input.value) || 0;
+      });
+
+      // Spécificités par statut
+      const elCddPrec = $('#cc-cdd-precarite');
+      const elCddCp = $('#cc-cdd-cp');
+      const elIntCoeff = $('#cc-interim-coeff');
+      const elFreelTaux = $('#cc-freelance-taux');
+      const elFondRegime = $('#cc-fondateur-regime');
+      const elFondTNS = $('#cc-fondateur-tns');
+
+      if (elCddPrec && cc.cdd) cc.cdd.primePrecarite = parseFloat(elCddPrec.value) || 10;
+      if (elCddCp && cc.cdd) cc.cdd.indemniteCP = parseFloat(elCddCp.value) || 10;
+      if (elIntCoeff && cc.interim) cc.interim.coefficientAgence = parseFloat(elIntCoeff.value) || 2.0;
+      if (elFreelTaux && cc.freelance) cc.freelance.tauxCharges = parseFloat(elFreelTaux.value) || 21.1;
+      if (elFondRegime && cc.fondateur) cc.fondateur.regime = elFondRegime.value;
+      if (elFondTNS && cc.fondateur) cc.fondateur.tauxTNS = parseFloat(elFondTNS.value) || 45;
     }
 
     /** Synchronise l'intégralité du state depuis les valeurs DOM */
@@ -8651,7 +9385,8 @@ Views.Settings = {
           marginAlertThreshold:        state.marginAlertThreshold,
           vatRate:                     state.vatRate,
           estimatedAnnualSessions:     state.estimatedAnnualSessions,
-          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel
+          nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel,
+          chargesConfig:               state.chargesConfig
         };
 
         DB.settings.update(update);
