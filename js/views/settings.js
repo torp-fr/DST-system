@@ -712,7 +712,14 @@ Views.Settings = {
       $$('[data-section="amort"] .am-label, [data-section="amort"] .am-amount, [data-section="amort"] .am-duration').forEach(input => {
         input.addEventListener('input', () => {
           syncAmortFromDOM();
-          reRenderSection('amort', renderAmortization);
+          /* Mettre à jour les affichages annuels par ligne sans re-rendre */
+          $$('[data-section="amort"]').forEach(row => {
+            const amt = parseFloat(row.querySelector('.am-amount').value) || 0;
+            const dur = Math.max(parseInt(row.querySelector('.am-duration').value, 10) || 1, 1);
+            const annualSpan = row.querySelector('.text-mono.text-muted');
+            if (annualSpan) annualSpan.textContent = Engine.fmt(Engine.round2(amt / dur)) + '/an';
+          });
+          refreshTotals();
         });
       });
 

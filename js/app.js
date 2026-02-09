@@ -95,7 +95,7 @@ const App = (() => {
     const navSections = [
       { title: 'Pilotage', items: ['dashboard'] },
       { title: 'Gestion opérationnelle', items: ['clients', 'offers', 'sessions'] },
-      { title: 'Ressources', items: ['operators', 'modules', 'locations'] },
+      { title: 'Ressources', items: ['operators', 'modules'] },
       { title: 'Configuration', items: ['settings'] }
     ];
 
