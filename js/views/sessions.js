@@ -650,6 +650,9 @@ Views.Sessions = {
                     <div class="form-group">
                       <label for="sess-date">Date</label>
                       <input type="date" id="sess-date" class="form-control" value="${data.date || ''}">
+                      <div id="date-warning" class="form-help" style="color:#d32f2f; display:none; margin-top:4px">
+                        ⚠ Cette date est dans le passé
+                      </div>
                     </div>
                     <div class="form-group">
                       <label for="sess-time">Heure</label>
@@ -861,6 +864,29 @@ Views.Sessions = {
           validatePrice();
         }
 
+        // Validation date (avertissement si date passée)
+        const dateEl = form.querySelector('#sess-date');
+        const dateWarning = overlay.querySelector('#date-warning');
+        if (dateEl && dateWarning) {
+          const checkPastDate = () => {
+            const dateVal = dateEl.value;
+            if (dateVal) {
+              const selectedDate = new Date(dateVal + 'T00:00:00');
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              if (selectedDate < today) {
+                dateWarning.style.display = '';
+              } else {
+                dateWarning.style.display = 'none';
+              }
+            } else {
+              dateWarning.style.display = 'none';
+            }
+          };
+          dateEl.addEventListener('change', checkPastDate);
+          checkPastDate(); // Vérifier au chargement initial
+        }
+
         // Champs qui déclenchent un recalcul des coûts
         const recalcFields = [
           '#sess-price', '#sess-location', '#sess-offer'
@@ -930,7 +956,9 @@ Views.Sessions = {
             const offer = DB.offers.getById(data.offerId);
             if (offer && offer.type === 'abonnement') {
               const consumed = (offer.sessionsConsumed || 0) + 1;
-              DB.offers.update(offer.id, { sessionsConsumed: consumed });
+              // Garde : ne pas dépasser le nombre de sessions de l'abonnement
+              const finalConsumed = Math.min(consumed, offer.nbSessions || 0);
+              DB.offers.update(offer.id, { sessionsConsumed: finalConsumed });
             }
           }
 
