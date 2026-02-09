@@ -34,6 +34,9 @@ Views.Settings = {
       hoursPerDay:              settings.hoursPerDay ?? 7,
       estimatedAnnualSessions:  settings.estimatedAnnualSessions ?? 100,
       nbJoursObjectifAnnuel:    settings.nbJoursObjectifAnnuel ?? 50,
+      floorPriceMargin:         settings.floorPriceMargin ?? 5,
+      operatorDependencyRiskThreshold: settings.operatorDependencyRiskThreshold ?? 40,
+      urssafRequalificationDays: settings.urssafRequalificationDays ?? 45,
       chargesConfig:            JSON.parse(JSON.stringify(settings.chargesConfig || DB.settings.getDefaults().chargesConfig))
     };
 
@@ -258,6 +261,23 @@ Views.Settings = {
               <label for="eco-est-sessions">Sessions estimées / an</label>
               <input type="number" id="eco-est-sessions" class="form-control" value="${state.estimatedAnnualSessions}" min="0" step="any">
               <span class="form-help">Base de répartition des coûts fixes par session</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="eco-floor-margin">Marge de sécurité prix plancher (%)</label>
+              <input type="number" id="eco-floor-margin" class="form-control" value="${state.floorPriceMargin}" min="0" max="100" step="any">
+              <span class="form-help">Surcoût appliqué au coût total pour déterminer le prix plancher</span>
+            </div>
+            <div class="form-group">
+              <label for="eco-dep-risk">Seuil risque dépendance opérateur (%)</label>
+              <input type="number" id="eco-dep-risk" class="form-control" value="${state.operatorDependencyRiskThreshold}" min="0" max="100" step="any">
+              <span class="form-help">Alerte si un opérateur représente plus de ce % du CA</span>
+            </div>
+            <div class="form-group">
+              <label for="eco-urssaf-days">Seuil requalification URSSAF (jours)</label>
+              <input type="number" id="eco-urssaf-days" class="form-control" value="${state.urssafRequalificationDays}" min="1" max="365" step="1">
+              <span class="form-help">Nombre de jours avant requalification en CDI (France)</span>
             </div>
           </div>
           <div class="form-row">
@@ -625,6 +645,9 @@ Views.Settings = {
       state.hoursPerDay              = parseFloat($('#eco-hours-day').value) || 7;
       state.estimatedAnnualSessions  = parseInt($('#eco-est-sessions').value, 10) || 1;
       state.nbJoursObjectifAnnuel    = parseInt($('#eco-nb-jours').value, 10) || 50;
+      state.floorPriceMargin         = parseFloat($('#eco-floor-margin').value) || 5;
+      state.operatorDependencyRiskThreshold = parseFloat($('#eco-dep-risk').value) || 40;
+      state.urssafRequalificationDays = parseInt($('#eco-urssaf-days').value, 10) || 45;
 
       // Mettre à jour l'affichage du seuil plancher auto-calculé
       const seuilEl = $('#eco-seuil-plancher');
@@ -884,6 +907,9 @@ Views.Settings = {
           hoursPerDay:                 state.hoursPerDay,
           estimatedAnnualSessions:     state.estimatedAnnualSessions,
           nbJoursObjectifAnnuel:       state.nbJoursObjectifAnnuel,
+          floorPriceMargin:            state.floorPriceMargin,
+          operatorDependencyRiskThreshold: state.operatorDependencyRiskThreshold,
+          urssafRequalificationDays:   state.urssafRequalificationDays,
           chargesConfig:               state.chargesConfig
         };
 

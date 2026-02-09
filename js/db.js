@@ -232,7 +232,13 @@ const DB = (() => {
     // Seuil alerte surcharge opérateur (sessions/mois)
     operatorOverloadThreshold: 15,
     // Seuil bascule CDI (sessions/an par opérateur)
-    cdiThreshold: 80
+    cdiThreshold: 80,
+    // Marge de sécurité prix plancher (%)
+    floorPriceMargin: 5,
+    // Seuil risque dépendance opérateur (%)
+    operatorDependencyRiskThreshold: 40,
+    // Seuil requalification URSSAF (jours)
+    urssafRequalificationDays: 45
   };
 
   const settings = {
