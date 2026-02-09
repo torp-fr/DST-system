@@ -15,7 +15,7 @@ const App = (() => {
     dashboard:  { label: 'Dashboard dirigeant', icon: '◉', view: () => Views.Dashboard },
     clients:    { label: 'Clients',              icon: '⊡', view: () => Views.Clients },
     offers:     { label: 'Offres / Abonnements', icon: '⊞', view: () => Views.Offers },
-    sessions:   { label: 'Sessions',             icon: '▶', view: () => Views.Sessions },
+    sessions:   { label: 'Planning',              icon: '▶', view: () => Views.Sessions },
     operators:  { label: 'Opérateurs',           icon: '⊕', view: () => Views.Operators },
     modules:    { label: 'Modules',              icon: '⬡', view: () => Views.Modules },
     locations:  { label: 'Lieux',                icon: '⊿', view: () => Views.Locations },
@@ -511,7 +511,7 @@ window.DST_Wizard = function() {
 
     html += '<div style="margin-top:20px;" class="flex gap-8" style="justify-content:center;">';
     html += '<button class="btn" onclick="App.navigate(\'clients\');">Voir les clients</button>';
-    html += '<button class="btn" onclick="App.navigate(\'sessions\');">Voir les sessions</button>';
+    html += '<button class="btn" onclick="App.navigate(\'sessions\');">Voir le planning</button>';
     html += '</div>';
     html += '</div>';
     return html;

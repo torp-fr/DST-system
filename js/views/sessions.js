@@ -1,959 +1,714 @@
 /* ============================================================
-   DST-SYSTEM — Vue Sessions
-   Module le plus central : relie clients, offres, modules,
-   opérateurs et lieux. CRUD complet, calcul de coûts en temps
-   réel, alertes, compatibilité, consommation abonnement.
+   DST-SYSTEM — Vue Planning
+   Planification simple : date + client + module + opérateur.
+   Vue calendrier mensuel + liste, formulaire minimaliste.
    ============================================================ */
 
 window.Views = window.Views || {};
 
-Views.Sessions = {
+Views.Sessions = (() => {
+  'use strict';
 
-  /* ==========================================================
-     Point d'entrée — rendu dans le conteneur fourni
-     ========================================================== */
-  render(container) {
-    'use strict';
+  let _container = null;
 
-    // --- État local ---
-    let searchTerm = '';
-    let filterStatus = 'all';
+  /* --- État du calendrier --- */
+  let _viewYear  = new Date().getFullYear();
+  let _viewMonth = new Date().getMonth(); // 0-indexed
+  let _selectedDate = null;               // 'YYYY-MM-DD' ou null
+  let _viewMode = 'calendar';             // 'calendar' | 'list'
+  let _filterStatus = '';
 
-    // --- Données référentielles (rechargées à chaque rendu) ---
-    const allClients   = () => DB.clients.getAll();
-    const allOperators = () => DB.operators.getAll();
-    const allModules   = () => DB.modules.getAll();
-    const allLocations = () => DB.locations.getAll();
-    const allOffers    = () => DB.offers.getAll();
-    const allSessions  = () => DB.sessions.getAll();
+  /* --- Constantes --- */
+  const STATUS_OPTIONS = [
+    { value: 'planifiee', label: 'Planifi\u00e9e',  tag: 'tag-blue' },
+    { value: 'confirmee', label: 'Confirm\u00e9e',  tag: 'tag-green' },
+    { value: 'en_cours',  label: 'En cours',        tag: 'tag-yellow' },
+    { value: 'terminee',  label: 'Termin\u00e9e',   tag: 'tag-neutral' },
+    { value: 'annulee',   label: 'Annul\u00e9e',    tag: 'tag-red' }
+  ];
 
-    /* --------------------------------------------------------
-       Helpers de lookup (résolution id → entité)
-       -------------------------------------------------------- */
-    function clientName(id) {
-      const c = DB.clients.getById(id);
-      return c ? (c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim()) : '—';
+  const DAYS_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const MONTHS_FR = [
+    'Janvier','F\u00e9vrier','Mars','Avril','Mai','Juin',
+    'Juillet','Ao\u00fbt','Septembre','Octobre','Novembre','D\u00e9cembre'
+  ];
+
+  /* === POINT D'ENTR\u00c9E === */
+  function render(container) {
+    _container = container;
+    _renderPage();
+  }
+
+  /* === RENDU PRINCIPAL === */
+  function _renderPage() {
+    const sessions = DB.sessions.getAll();
+    const today = new Date();
+    const todayStr = _isoDate(today);
+
+    /* KPI rapides */
+    const thisMonth = sessions.filter(s => {
+      if (!s.date) return false;
+      const d = new Date(s.date);
+      return d.getFullYear() === _viewYear && d.getMonth() === _viewMonth;
+    });
+    const upcoming = sessions.filter(s => s.date >= todayStr && s.status !== 'annulee')
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const confirmedThisMonth = thisMonth.filter(s => s.status === 'confirmee' || s.status === 'en_cours').length;
+
+    _container.innerHTML = `
+      <div class="page-header">
+        <h1>Planning</h1>
+        <div class="actions">
+          <button class="btn btn-sm ${_viewMode === 'calendar' ? 'btn-primary' : ''}" id="btn-view-cal">Calendrier</button>
+          <button class="btn btn-sm ${_viewMode === 'list' ? 'btn-primary' : ''}" id="btn-view-list">Liste</button>
+          <button class="btn btn-primary" id="btn-add-session">+ Planifier</button>
+        </div>
+      </div>
+
+      <!-- KPI -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">${MONTHS_FR[_viewMonth]} ${_viewYear}</div>
+          <div class="kpi-value">${thisMonth.length}</div>
+          <div class="kpi-detail">session${thisMonth.length > 1 ? 's' : ''} ce mois</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Confirm\u00e9es / En cours</div>
+          <div class="kpi-value">${confirmedThisMonth}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Prochaine session</div>
+          <div class="kpi-value" style="font-size:1rem;">${upcoming.length > 0 ? _formatDateFr(upcoming[0].date) : '\u2014'}</div>
+          <div class="kpi-detail">${upcoming.length > 0 ? _esc(upcoming[0].label || _clientName(upcoming[0].clientIds)) : ''}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">\u00c0 venir</div>
+          <div class="kpi-value">${upcoming.length}</div>
+        </div>
+      </div>
+
+      <!-- Contenu : calendrier ou liste -->
+      <div id="planning-content">
+        ${_viewMode === 'calendar' ? _renderCalendar(sessions) : _renderList(sessions)}
+      </div>
+
+      <!-- D\u00e9tail du jour s\u00e9lectionn\u00e9 -->
+      <div id="day-detail"></div>
+    `;
+
+    _bindEvents(sessions);
+  }
+
+  /* === CALENDRIER MENSUEL === */
+  function _renderCalendar(sessions) {
+    /* Sessions index\u00e9es par date */
+    const byDate = {};
+    sessions.forEach(s => {
+      if (!s.date) return;
+      if (!byDate[s.date]) byDate[s.date] = [];
+      byDate[s.date].push(s);
+    });
+
+    const firstDay = new Date(_viewYear, _viewMonth, 1);
+    const lastDay  = new Date(_viewYear, _viewMonth + 1, 0);
+    const daysInMonth = lastDay.getDate();
+
+    /* Quel jour de la semaine commence le mois (lundi = 0) */
+    let startWeekday = firstDay.getDay() - 1;
+    if (startWeekday < 0) startWeekday = 6;
+
+    const todayStr = _isoDate(new Date());
+
+    let html = `
+      <div class="card">
+        <!-- Navigation mois -->
+        <div class="flex-between mb-16">
+          <button class="btn btn-sm" id="btn-prev-month">&larr;</button>
+          <h2 style="font-size:1.1rem;">${MONTHS_FR[_viewMonth]} ${_viewYear}</h2>
+          <button class="btn btn-sm" id="btn-next-month">&rarr;</button>
+        </div>
+
+        <!-- Grille calendrier -->
+        <div class="cal-grid">
+          ${DAYS_FR.map(d => `<div class="cal-header">${d}</div>`).join('')}
+    `;
+
+    /* Cases vides avant le 1er */
+    for (let i = 0; i < startWeekday; i++) {
+      html += '<div class="cal-day cal-empty"></div>';
     }
 
-    function operatorName(id) {
-      const o = DB.operators.getById(id);
-      return o ? `${o.firstName || ''} ${o.lastName || ''}`.trim() : '—';
-    }
+    /* Jours du mois */
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = _viewYear + '-' + String(_viewMonth + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+      const daySessions = byDate[dateStr] || [];
+      const isToday = dateStr === todayStr;
+      const isSelected = dateStr === _selectedDate;
+      const hasItems = daySessions.length > 0;
 
-    function moduleName(id) {
-      const m = DB.modules.getById(id);
-      return m ? m.name : '—';
-    }
+      let dayClasses = 'cal-day';
+      if (isToday) dayClasses += ' cal-today';
+      if (isSelected) dayClasses += ' cal-selected';
+      if (hasItems) dayClasses += ' cal-has-items';
 
-    function locationName(id) {
-      const l = DB.locations.getById(id);
-      return l ? l.name : '—';
-    }
-
-    function offerLabel(id) {
-      const o = DB.offers.getById(id);
-      if (!o) return '—';
-      return o.label || o.name || Engine.offerTypeLabel(o.type);
-    }
-
-    /* --------------------------------------------------------
-       Correspondance statut → classe tag CSS
-       -------------------------------------------------------- */
-    function statusTagClass(status) {
-      const map = {
-        planifiee: 'tag-blue',
-        confirmee: 'tag-green',
-        en_cours:  'tag-yellow',
-        terminee:  'tag-neutral',
-        annulee:   'tag-red'
-      };
-      return map[status] || 'tag-neutral';
-    }
-
-    /* --------------------------------------------------------
-       Classe CSS pour le niveau d'alerte Engine
-       -------------------------------------------------------- */
-    function alertCssClass(level) {
-      if (level === 'critical') return 'alert-danger';
-      if (level === 'warning')  return 'alert-warning';
-      return 'alert-info';
-    }
-
-    function alertIcon(level) {
-      if (level === 'critical') return '!!';
-      if (level === 'warning')  return '!';
-      return 'i';
-    }
-
-    /* --------------------------------------------------------
-       Formater une date ISO en JJ/MM/AAAA
-       -------------------------------------------------------- */
-    function fmtDate(iso) {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      if (isNaN(d)) return iso;
-      return d.toLocaleDateString('fr-FR');
-    }
-
-    /* --------------------------------------------------------
-       Raccourci liste tronquée (3 éléments max)
-       -------------------------------------------------------- */
-    function truncList(arr, mapFn, max) {
-      max = max || 3;
-      if (!arr || arr.length === 0) return '—';
-      const mapped = arr.map(mapFn);
-      if (mapped.length <= max) return mapped.join(', ');
-      return mapped.slice(0, max).join(', ') + ` (+${mapped.length - max})`;
-    }
-
-    /* ==========================================================
-       Rendu principal — en-tête + table ou état vide
-       ========================================================== */
-    function renderMain() {
-      const sessions = allSessions();
-
-      // Filtrage par statut
-      let filtered = sessions;
-      if (filterStatus !== 'all') {
-        filtered = filtered.filter(s => s.status === filterStatus);
+      /* Indicateurs de sessions (petits points color\u00e9s) */
+      let dots = '';
+      if (hasItems) {
+        const maxDots = Math.min(daySessions.length, 4);
+        dots = '<div class="cal-dots">';
+        for (let i = 0; i < maxDots; i++) {
+          const s = daySessions[i];
+          const dotColor = _statusColor(s.status);
+          dots += `<span class="cal-dot" style="background:${dotColor};"></span>`;
+        }
+        if (daySessions.length > 4) {
+          dots += `<span class="cal-dot-more">+${daySessions.length - 4}</span>`;
+        }
+        dots += '</div>';
       }
 
-      // Filtrage par recherche texte
-      if (searchTerm) {
-        const q = searchTerm.toLowerCase();
-        filtered = filtered.filter(s => {
-          const label = (s.label || '').toLowerCase();
-          const clientNames = (s.clientIds || []).map(id => clientName(id).toLowerCase()).join(' ');
-          const modNames = (s.moduleIds || []).map(id => moduleName(id).toLowerCase()).join(' ');
-          const loc = locationName(s.locationId).toLowerCase();
-          return label.includes(q) || clientNames.includes(q) || modNames.includes(q) || loc.includes(q);
-        });
-      }
+      html += `
+        <div class="${dayClasses}" data-date="${dateStr}">
+          <span class="cal-day-num">${day}</span>
+          ${dots}
+        </div>
+      `;
+    }
 
-      // Tri par date décroissante
-      filtered.sort((a, b) => {
-        const da = a.date ? new Date(a.date) : new Date(0);
-        const db = b.date ? new Date(b.date) : new Date(0);
-        return db - da;
-      });
+    html += '</div></div>';
+    return html;
+  }
 
-      // Compteurs par statut pour les onglets
-      const countByStatus = {};
-      sessions.forEach(s => {
-        countByStatus[s.status] = (countByStatus[s.status] || 0) + 1;
-      });
+  /* === VUE LISTE === */
+  function _renderList(sessions) {
+    let filtered = sessions.filter(s => {
+      if (!s.date) return false;
+      const d = new Date(s.date);
+      return d.getFullYear() === _viewYear && d.getMonth() === _viewMonth;
+    });
 
-      container.innerHTML = `
-        <!-- En-tête de page -->
-        <div class="page-header">
-          <h1>Sessions</h1>
-          <div class="actions">
-            <div class="search-bar">
-              <span class="search-icon">&#128269;</span>
-              <input type="text" id="sess-search" class="form-control"
-                     placeholder="Rechercher..." value="${searchTerm}">
-            </div>
-            <button class="btn btn-primary" id="btn-new-session">+ Nouvelle session</button>
+    if (_filterStatus) {
+      filtered = filtered.filter(s => s.status === _filterStatus);
+    }
+
+    filtered.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
+
+    let html = `
+      <div class="card">
+        <div class="flex-between mb-16">
+          <div class="flex gap-8" style="align-items:center;">
+            <button class="btn btn-sm" id="btn-prev-month">&larr;</button>
+            <h2 style="font-size:1.1rem;">${MONTHS_FR[_viewMonth]} ${_viewYear}</h2>
+            <button class="btn btn-sm" id="btn-next-month">&rarr;</button>
           </div>
+          <select class="form-control" id="filter-status-list" style="width:auto;min-width:150px;">
+            <option value="">Tous les statuts</option>
+            ${STATUS_OPTIONS.map(so => `<option value="${so.value}" ${_filterStatus === so.value ? 'selected' : ''}>${so.label}</option>`).join('')}
+          </select>
         </div>
+    `;
 
-        <!-- Onglets de filtre par statut -->
-        <div class="tabs" id="sess-status-tabs">
-          <button class="tab-btn ${filterStatus === 'all' ? 'active' : ''}" data-status="all">
-            Toutes (${sessions.length})
-          </button>
-          <button class="tab-btn ${filterStatus === 'planifiee' ? 'active' : ''}" data-status="planifiee">
-            Planifiées (${countByStatus.planifiee || 0})
-          </button>
-          <button class="tab-btn ${filterStatus === 'confirmee' ? 'active' : ''}" data-status="confirmee">
-            Confirmées (${countByStatus.confirmee || 0})
-          </button>
-          <button class="tab-btn ${filterStatus === 'en_cours' ? 'active' : ''}" data-status="en_cours">
-            En cours (${countByStatus.en_cours || 0})
-          </button>
-          <button class="tab-btn ${filterStatus === 'terminee' ? 'active' : ''}" data-status="terminee">
-            Terminées (${countByStatus.terminee || 0})
-          </button>
-          <button class="tab-btn ${filterStatus === 'annulee' ? 'active' : ''}" data-status="annulee">
-            Annulées (${countByStatus.annulee || 0})
-          </button>
-        </div>
-
-        ${filtered.length === 0 ? renderEmptyState() : renderTable(filtered)}
-      `;
-
-      attachMainListeners(filtered);
-    }
-
-    /* ==========================================================
-       Rendu de l'état vide
-       ========================================================== */
-    function renderEmptyState() {
-      return `
-        <div class="empty-state">
-          <div class="empty-icon">&#128197;</div>
-          <p>Aucune session ${filterStatus !== 'all' ? 'avec ce statut' : 'enregistrée'}.</p>
-          <button class="btn btn-primary" id="btn-empty-new">+ Créer une session</button>
-        </div>
-      `;
-    }
-
-    /* ==========================================================
-       Rendu de la table des sessions
-       ========================================================== */
-    function renderTable(sessions) {
-      const rows = sessions.map(s => {
-        const cost = Engine.computeSessionCost(s);
-        const marginClass = cost.belowFloor ? 'text-red'
-          : cost.marginPercent < (DB.settings.get().marginAlertThreshold || 15) ? 'text-yellow'
-          : 'text-green';
-
-        // HT/TTC selon catégorie client
-        const sessionClients = (s.clientIds || []).map(cid => DB.clients.getById(cid)).filter(Boolean);
-        const hasB2C = sessionClients.some(c => c.clientCategory === 'B2C');
-        const priceHT = s.price || 0;
-        const prixAffiche = hasB2C ? Engine.computeTTC(priceHT) : priceHT;
-        const prixLabel = hasB2C ? 'TTC' : 'HT';
-
-        return `
-          <tr data-id="${s.id}">
-            <td>${fmtDate(s.date)}${s.time ? '<br><span class="text-muted" style="font-size:.75rem">' + s.time + '</span>' : ''}</td>
-            <td><strong>${s.label || '—'}</strong></td>
-            <td>${truncList(s.clientIds, clientName)}</td>
-            <td>${truncList(s.moduleIds, moduleName, 2)}</td>
-            <td>${truncList(s.operatorIds, operatorName, 2)}</td>
-            <td>${locationName(s.locationId)}</td>
-            <td class="num">${priceHT ? Engine.fmt(prixAffiche) + ' <small class="text-muted">' + prixLabel + '</small>' : '—'}</td>
-            <td class="num ${marginClass}">${s.price ? Engine.fmtPercent(cost.marginPercent) : '—'}</td>
-            <td><span class="tag ${statusTagClass(s.status)}">${Engine.sessionStatusLabel(s.status)}</span></td>
-            <td class="actions-cell">
-              <button class="btn btn-sm btn-edit" data-id="${s.id}" title="Modifier">&#9998;</button>
-              <button class="btn btn-sm btn-delete" data-id="${s.id}" title="Supprimer">&#128465;</button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-
-      return `
-        <div class="card">
-          <div class="data-table-wrap">
-            <table class="data-table">
-              <thead>
+    if (filtered.length === 0) {
+      html += '<div class="empty-state" style="padding:24px;"><p class="text-muted">Aucune session ce mois.</p></div>';
+    } else {
+      html += `
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Libell\u00e9</th>
+                <th>Client</th>
+                <th>Module</th>
+                <th>Op\u00e9rateur(s)</th>
+                <th>Lieu</th>
+                <th>Statut</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.map(s => `
                 <tr>
-                  <th>Date</th>
-                  <th>Libellé</th>
-                  <th>Client(s)</th>
-                  <th>Modules</th>
-                  <th>Opérateurs</th>
-                  <th>Lieu</th>
-                  <th class="text-right">Prix</th>
-                  <th class="text-right">Marge %</th>
-                  <th>Statut</th>
-                  <th></th>
+                  <td>${_formatDateFr(s.date)}${s.time ? '<br><small class="text-muted">' + _esc(s.time) + '</small>' : ''}</td>
+                  <td><strong>${_esc(s.label || '\u2014')}</strong></td>
+                  <td>${_clientName(s.clientIds)}</td>
+                  <td>${_moduleNames(s.moduleIds)}</td>
+                  <td>${_operatorNames(s.operatorIds)}</td>
+                  <td>${_locationName(s.locationId)}</td>
+                  <td><span class="tag ${_statusTag(s.status)}">${_statusLabel(s.status)}</span></td>
+                  <td class="actions-cell">
+                    <button class="btn btn-sm btn-edit-sess" data-id="${s.id}" title="Modifier">&#9998;</button>
+                    <button class="btn btn-sm btn-del-sess" data-id="${s.id}" title="Supprimer">&#128465;</button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
-    }
-
-    /* ==========================================================
-       Écouteurs de la vue principale
-       ========================================================== */
-    function attachMainListeners(filteredSessions) {
-      // Recherche
-      const searchInput = container.querySelector('#sess-search');
-      if (searchInput) {
-        searchInput.addEventListener('input', e => {
-          searchTerm = e.target.value;
-          renderMain();
-        });
-      }
-
-      // Onglets statut
-      const tabs = container.querySelectorAll('#sess-status-tabs .tab-btn');
-      tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-          filterStatus = tab.dataset.status;
-          renderMain();
-        });
-      });
-
-      // Bouton nouvelle session (en-tête et état vide)
-      const btnNew = container.querySelector('#btn-new-session');
-      if (btnNew) btnNew.addEventListener('click', () => openModal(null));
-
-      const btnEmptyNew = container.querySelector('#btn-empty-new');
-      if (btnEmptyNew) btnEmptyNew.addEventListener('click', () => openModal(null));
-
-      // Boutons modifier
-      container.querySelectorAll('.btn-edit').forEach(btn => {
-        btn.addEventListener('click', e => {
-          e.stopPropagation();
-          const id = btn.dataset.id;
-          const session = DB.sessions.getById(id);
-          if (session) openModal(session);
-        });
-      });
-
-      // Boutons supprimer
-      container.querySelectorAll('.btn-delete').forEach(btn => {
-        btn.addEventListener('click', e => {
-          e.stopPropagation();
-          const id = btn.dataset.id;
-          const session = DB.sessions.getById(id);
-          if (session) openDeleteConfirm(session);
-        });
-      });
-    }
-
-    /* ==========================================================
-       Modal de confirmation de suppression
-       ========================================================== */
-    function openDeleteConfirm(session) {
-      const overlay = document.createElement('div');
-      overlay.className = 'modal-overlay';
-      overlay.innerHTML = `
-        <div class="modal" style="max-width:480px">
-          <div class="modal-header">
-            <h2>Supprimer la session</h2>
-            <button class="btn btn-sm btn-close-modal">&times;</button>
-          </div>
-          <div class="modal-body">
-            <p>Confirmez-vous la suppression de la session
-               <strong>${session.label || '(sans libellé)'}</strong>
-               du ${fmtDate(session.date)} ?</p>
-            <p class="text-muted" style="margin-top:8px;font-size:.82rem">
-              Cette action est irréversible.
-            </p>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-cancel-del">Annuler</button>
-            <button class="btn btn-primary btn-confirm-del">Supprimer</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-
-      // Fermeture
-      const close = () => { overlay.remove(); };
-      overlay.querySelector('.btn-close-modal').addEventListener('click', close);
-      overlay.querySelector('.btn-cancel-del').addEventListener('click', close);
-      overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-      // Confirmation
-      overlay.querySelector('.btn-confirm-del').addEventListener('click', () => {
-        DB.sessions.delete(session.id);
-        close();
-        renderMain();
-        Toast.show('Session supprimée.', 'warning');
-      });
-    }
-
-    /* ==========================================================
-       Vérifications de compatibilité
-       ========================================================== */
-
-    /**
-     * Vérifie les incompatibilités entre modules sélectionnés.
-     * Retourne un tableau de messages d'avertissement.
-     */
-    function checkModuleIncompatibilities(moduleIds) {
-      const warnings = [];
-      if (!moduleIds || moduleIds.length < 2) return warnings;
-      const mods = moduleIds.map(id => DB.modules.getById(id)).filter(Boolean);
-      for (let i = 0; i < mods.length; i++) {
-        for (let j = i + 1; j < mods.length; j++) {
-          const a = mods[i];
-          const b = mods[j];
-          // Vérifier si a déclare b incompatible
-          if (a.incompatibilities && a.incompatibilities.includes(b.id)) {
-            warnings.push(`"${a.name}" et "${b.name}" sont déclarés incompatibles.`);
-          }
-          // Vérifier si b déclare a incompatible
-          if (b.incompatibilities && b.incompatibilities.includes(a.id)) {
-            if (!warnings.some(w => w.includes(a.name) && w.includes(b.name))) {
-              warnings.push(`"${b.name}" et "${a.name}" sont déclarés incompatibles.`);
-            }
-          }
-        }
-      }
-      return warnings;
-    }
-
-    /**
-     * Vérifie si les modules sélectionnés sont compatibles avec le lieu choisi.
-     * Retourne un tableau de messages d'avertissement.
-     */
-    function checkLocationCompatibility(locationId, moduleIds) {
-      const warnings = [];
-      if (!locationId || !moduleIds || moduleIds.length === 0) return warnings;
-      const loc = DB.locations.getById(locationId);
-      if (!loc || !loc.compatibleModuleIds) return warnings;
-      moduleIds.forEach(modId => {
-        if (!loc.compatibleModuleIds.includes(modId)) {
-          const mod = DB.modules.getById(modId);
-          warnings.push(
-            `Le module "${mod ? mod.name : modId}" n'est pas compatible avec le lieu "${loc.name}".`
-          );
-        }
-      });
-      return warnings;
-    }
-
-    /* ==========================================================
-       Informations abonnement (si offre de type abonnement)
-       ========================================================== */
-    function renderSubscriptionInfo(offerId) {
-      if (!offerId) return '';
-      const offer = DB.offers.getById(offerId);
-      if (!offer || offer.type !== 'abonnement') return '';
-
-      const total  = offer.nbSessions || 0;
-      const used   = offer.sessionsConsumed || 0;
-      const remain = Math.max(total - used, 0);
-      const pct    = total > 0 ? Math.round((used / total) * 100) : 0;
-
-      let fillClass = 'fill-green';
-      if (pct >= 90) fillClass = 'fill-red';
-      else if (pct >= 70) fillClass = 'fill-yellow';
-
-      return `
-        <div class="card" style="margin-top:12px;padding:14px">
-          <div class="card-header" style="margin-bottom:8px">
-            <h3>Consommation abonnement</h3>
-          </div>
-          <p style="font-size:.85rem;margin-bottom:8px">
-            Offre : <strong>${offer.label || offer.name || Engine.offerTypeLabel(offer.type)}</strong>
-          </p>
-          <div class="flex-between mb-8" style="font-size:.82rem">
-            <span>${used} / ${total} sessions consommées</span>
-            <span class="${remain <= 2 ? 'text-red' : ''}">${remain} restante(s)</span>
-          </div>
-          <div class="progress-bar">
-            <div class="progress-fill ${fillClass}" style="width:${Math.min(pct, 100)}%"></div>
-          </div>
-          ${remain === 0 ? '<p class="text-red" style="margin-top:6px;font-size:.8rem">Toutes les sessions de cet abonnement ont été consommées.</p>' : ''}
-        </div>
-      `;
-    }
-
-    /* ==========================================================
-       Panneau de ventilation des coûts (temps réel)
-       ========================================================== */
-    function renderCostBreakdown(sessionData) {
-      const cost = Engine.computeSessionCost(sessionData);
-
-      // Alertes
-      let alertsHtml = '';
-      if (cost.alerts.length > 0) {
-        alertsHtml = cost.alerts.map(a => `
-          <div class="alert ${alertCssClass(a.level)}">
-            <span class="alert-icon">${alertIcon(a.level)}</span>
-            <span>${a.message}</span>
-          </div>
-        `).join('');
-      }
-
-      return `
-        <div class="card" id="cost-breakdown-panel" style="margin-top:12px;padding:14px">
-          <div class="card-header" style="margin-bottom:10px">
-            <h3>Ventilation des coûts</h3>
-          </div>
-
-          ${alertsHtml}
-
-          <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
-            <div class="kpi-card" style="padding:12px">
-              <span class="kpi-label">Opérateurs</span>
-              <span class="kpi-value" style="font-size:1.1rem">${Engine.fmt(cost.operatorsCost)}</span>
-            </div>
-            <div class="kpi-card" style="padding:12px">
-              <span class="kpi-label">Modules</span>
-              <span class="kpi-value" style="font-size:1.1rem">${Engine.fmt(cost.modulesCost)}</span>
-            </div>
-            <div class="kpi-card" style="padding:12px">
-              <span class="kpi-label">Coûts variables</span>
-              <span class="kpi-value" style="font-size:1.1rem">${Engine.fmt(cost.variableCosts)}</span>
-            </div>
-            <div class="kpi-card" style="padding:12px">
-              <span class="kpi-label">Quote-part fixe</span>
-              <span class="kpi-value" style="font-size:1.1rem">${Engine.fmt(cost.fixedCostShare)}</span>
-            </div>
-            <div class="kpi-card" style="padding:12px">
-              <span class="kpi-label">Amortissements</span>
-              <span class="kpi-value" style="font-size:1.1rem">${Engine.fmt(cost.amortizationShare)}</span>
-            </div>
-          </div>
-
-          <table style="width:100%;font-size:.85rem;border-collapse:collapse">
-            <tr style="border-top:1px solid var(--border-color)">
-              <td style="padding:6px 0;font-weight:600">Coût total</td>
-              <td class="text-right text-mono" style="padding:6px 0">${Engine.fmt(cost.totalCost)}</td>
-            </tr>
-            <tr>
-              <td style="padding:6px 0;font-weight:600">Prix facturé</td>
-              <td class="text-right text-mono" style="padding:6px 0">${Engine.fmt(cost.revenue)}</td>
-            </tr>
-            <tr style="border-top:1px solid var(--border-color)">
-              <td style="padding:6px 0;font-weight:700">Marge</td>
-              <td class="text-right text-mono ${cost.margin >= 0 ? 'text-green' : 'text-red'}" style="padding:6px 0">
-                ${Engine.fmt(cost.margin)} (${Engine.fmtPercent(cost.marginPercent)})
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:6px 0;color:var(--text-muted)">Prix plancher</td>
-              <td class="text-right text-mono" style="padding:6px 0;color:var(--text-muted)">
-                ${Engine.fmt(cost.floorPrice)}
-              </td>
-            </tr>
+              `).join('')}
+            </tbody>
           </table>
         </div>
       `;
     }
 
-    /* ==========================================================
-       Sous-formulaire des coûts variables (ajout / suppression)
-       ========================================================== */
-    function renderVariableCostsSubform(variableCosts) {
-      const lines = (variableCosts || []).map((vc, i) => `
-        <div class="form-row" style="grid-template-columns:1fr 120px 40px;align-items:end;margin-bottom:6px" data-vc-idx="${i}">
-          <div class="form-group" style="margin-bottom:0">
-            ${i === 0 ? '<label>Libellé</label>' : ''}
-            <input type="text" class="form-control vc-label" value="${vc.label || ''}" placeholder="Ex: Transport">
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            ${i === 0 ? '<label>Montant</label>' : ''}
-            <input type="number" class="form-control vc-amount" value="${vc.amount || 0}" min="0" step="any">
-          </div>
-          <div style="padding-bottom:2px">
-            <button type="button" class="btn btn-sm vc-remove" data-idx="${i}" title="Retirer">&times;</button>
-          </div>
+    html += '</div>';
+    return html;
+  }
+
+  /* === D\u00c9TAIL D'UN JOUR (sous le calendrier) === */
+  function _renderDayDetail(dateStr, sessions) {
+    const panel = _container.querySelector('#day-detail');
+    if (!panel) return;
+
+    const daySessions = sessions.filter(s => s.date === dateStr);
+    daySessions.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+    const d = new Date(dateStr);
+    const label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+    let html = `
+      <div class="card mt-16">
+        <div class="card-header">
+          <h2 style="text-transform:capitalize;">${label}</h2>
+          <button class="btn btn-sm btn-primary" id="btn-add-on-date" data-date="${dateStr}">+ Planifier ce jour</button>
         </div>
-      `).join('');
+    `;
 
-      return `
-        <div id="variable-costs-section">
-          <label style="display:block;font-size:.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">
-            Coûts variables
-          </label>
-          ${lines}
-          <button type="button" class="btn btn-sm" id="btn-add-vc" style="margin-top:4px">+ Ajouter un coût</button>
-        </div>
-      `;
-    }
-
-    /* ==========================================================
-       Rendu multi-select sous forme de checkboxes
-       ========================================================== */
-    function renderCheckboxGroup(name, options, selectedIds) {
-      if (!options || options.length === 0) {
-        return '<p class="text-muted" style="font-size:.82rem">Aucun élément disponible.</p>';
-      }
-      const sel = selectedIds || [];
-      return `
-        <div class="checkbox-group" style="max-height:160px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;background:var(--bg-input)">
-          ${options.map(o => `
-            <label class="form-check" style="margin-bottom:4px">
-              <input type="checkbox" name="${name}" value="${o.id}" ${sel.includes(o.id) ? 'checked' : ''}>
-              <span style="font-size:.85rem">${o.displayName}</span>
-            </label>
-          `).join('')}
-        </div>
-      `;
-    }
-
-    /* ==========================================================
-       Modal de création / édition
-       ========================================================== */
-    function openModal(session) {
-      const isEdit = !!session;
-      const data = session ? { ...session } : {
-        label: '',
-        date: new Date().toISOString().split('T')[0],
-        time: '',
-        clientIds: [],
-        offerId: '',
-        moduleIds: [],
-        operatorIds: [],
-        locationId: '',
-        price: 0,
-        status: 'planifiee',
-        variableCosts: [],
-        recurrence: null,
-        notes: ''
-      };
-
-      // Préparer les options pour les groupes de checkboxes
-      const clientOpts = allClients().map(c => ({
-        id: c.id,
-        displayName: c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.id
-      }));
-
-      const moduleOpts = allModules().map(m => ({
-        id: m.id,
-        displayName: m.name || m.id
-      }));
-
-      const operatorOpts = allOperators().map(o => ({
-        id: o.id,
-        displayName: `${o.firstName || ''} ${o.lastName || ''}`.trim() || o.id
-      }));
-
-      const locations = allLocations();
-      const offers    = allOffers();
-
-      // Construire le HTML de la modale
-      const overlay = document.createElement('div');
-      overlay.className = 'modal-overlay';
-
-      function buildModalContent() {
-        // Alertes de compatibilité
-        const modWarnings = checkModuleIncompatibilities(data.moduleIds);
-        const locWarnings = checkLocationCompatibility(data.locationId, data.moduleIds);
-        const compatAlerts = [...modWarnings, ...locWarnings];
-        const compatHtml = compatAlerts.length > 0
-          ? compatAlerts.map(w => `
-              <div class="alert alert-warning">
-                <span class="alert-icon">!</span>
-                <span>${w}</span>
-              </div>
-            `).join('')
-          : '';
-
+    if (daySessions.length === 0) {
+      html += '<div class="empty-state" style="padding:20px;"><p class="text-muted">Aucune session planifi\u00e9e ce jour.</p></div>';
+    } else {
+      html += daySessions.map(s => {
+        const statusOpt = STATUS_OPTIONS.find(so => so.value === s.status) || STATUS_OPTIONS[0];
         return `
-          <div class="modal modal-lg">
-            <div class="modal-header">
-              <h2>${isEdit ? 'Modifier la session' : 'Nouvelle session'}</h2>
-              <button class="btn btn-sm btn-close-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-
-              ${compatHtml}
-
-              <div class="grid-2">
-                <!-- Colonne gauche : formulaire -->
-                <div>
-                  <!-- Libellé -->
-                  <div class="form-group">
-                    <label for="sess-label">Libellé</label>
-                    <input type="text" id="sess-label" class="form-control"
-                           value="${data.label || ''}" placeholder="Ex: Session CQP Sécurité">
-                  </div>
-
-                  <!-- Date / Heure -->
-                  <div class="form-row" style="grid-template-columns:1fr 1fr">
-                    <div class="form-group">
-                      <label for="sess-date">Date</label>
-                      <input type="date" id="sess-date" class="form-control" value="${data.date || ''}">
-                    </div>
-                    <div class="form-group">
-                      <label for="sess-time">Heure</label>
-                      <input type="time" id="sess-time" class="form-control" value="${data.time || ''}">
-                    </div>
-                  </div>
-
-                  <!-- Statut / Récurrence -->
-                  <div class="form-row" style="grid-template-columns:1fr 1fr">
-                    <div class="form-group">
-                      <label for="sess-status">Statut</label>
-                      <select id="sess-status" class="form-control">
-                        <option value="planifiee"  ${data.status === 'planifiee'  ? 'selected' : ''}>Planifiée</option>
-                        <option value="confirmee"  ${data.status === 'confirmee'  ? 'selected' : ''}>Confirmée</option>
-                        <option value="en_cours"   ${data.status === 'en_cours'   ? 'selected' : ''}>En cours</option>
-                        <option value="terminee"   ${data.status === 'terminee'   ? 'selected' : ''}>Terminée</option>
-                        <option value="annulee"    ${data.status === 'annulee'    ? 'selected' : ''}>Annulée</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label for="sess-recurrence">Récurrence</label>
-                      <select id="sess-recurrence" class="form-control">
-                        <option value=""            ${!data.recurrence               ? 'selected' : ''}>Aucune</option>
-                        <option value="hebdomadaire" ${data.recurrence === 'hebdomadaire' ? 'selected' : ''}>Hebdomadaire</option>
-                        <option value="mensuel"      ${data.recurrence === 'mensuel'      ? 'selected' : ''}>Mensuel</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <!-- Prix -->
-                  <div class="form-group">
-                    <label for="sess-price">Prix facturé HT (EUR)</label>
-                    <input type="number" id="sess-price" class="form-control"
-                           value="${data.price || 0}" min="0" step="any">
-                    <div class="validation-hint" id="sess-price-hint"></div>
-                    <div id="sess-price-ttc-info" class="form-help" style="margin-top:4px;"></div>
-                  </div>
-
-                  <!-- Lieu -->
-                  <div class="form-group">
-                    <label for="sess-location">Lieu</label>
-                    <select id="sess-location" class="form-control">
-                      <option value="">— Aucun —</option>
-                      ${locations.map(l => `
-                        <option value="${l.id}" ${data.locationId === l.id ? 'selected' : ''}>${l.name}</option>
-                      `).join('')}
-                    </select>
-                  </div>
-
-                  <!-- Offre liée -->
-                  <div class="form-group">
-                    <label for="sess-offer">Offre liée (optionnel)</label>
-                    <select id="sess-offer" class="form-control">
-                      <option value="">— Aucune —</option>
-                      ${offers.map(o => `
-                        <option value="${o.id}" ${data.offerId === o.id ? 'selected' : ''}>
-                          ${o.label || o.name || Engine.offerTypeLabel(o.type)}${o.type === 'abonnement' ? ' [Abo]' : ''}
-                        </option>
-                      `).join('')}
-                    </select>
-                  </div>
-
-                  <!-- Clients (multi-select) -->
-                  <div class="form-group">
-                    <label>Client(s)</label>
-                    ${renderCheckboxGroup('clientIds', clientOpts, data.clientIds)}
-                  </div>
-
-                  <!-- Modules (multi-select) -->
-                  <div class="form-group">
-                    <label>Module(s)</label>
-                    ${renderCheckboxGroup('moduleIds', moduleOpts, data.moduleIds)}
-                  </div>
-
-                  <!-- Opérateurs (multi-select) -->
-                  <div class="form-group">
-                    <label>Opérateur(s)</label>
-                    ${renderCheckboxGroup('operatorIds', operatorOpts, data.operatorIds)}
-                  </div>
-
-                  <!-- Coûts variables -->
-                  ${renderVariableCostsSubform(data.variableCosts)}
-
-                  <!-- Notes -->
-                  <div class="form-group" style="margin-top:12px">
-                    <label for="sess-notes">Notes</label>
-                    <textarea id="sess-notes" class="form-control" rows="3"
-                              placeholder="Remarques, consignes particulières...">${data.notes || ''}</textarea>
-                  </div>
+          <div class="planning-card" style="border-left:4px solid ${_statusColor(s.status)};">
+            <div class="flex-between" style="align-items:flex-start;">
+              <div>
+                <strong>${s.time ? _esc(s.time) + ' \u2014 ' : ''}${_esc(s.label || 'Session')}</strong>
+                <div class="text-muted" style="font-size:0.82rem;margin-top:4px;">
+                  Client : <strong>${_clientName(s.clientIds)}</strong>
+                  &nbsp;&middot;&nbsp; Module : <strong>${_moduleNames(s.moduleIds)}</strong>
+                  &nbsp;&middot;&nbsp; Op\u00e9rateur : <strong>${_operatorNames(s.operatorIds)}</strong>
+                  ${s.locationId ? '&nbsp;&middot;&nbsp; Lieu : ' + _esc(_locationName(s.locationId)) : ''}
                 </div>
-
-                <!-- Colonne droite : ventilation coûts + abonnement -->
-                <div>
-                  ${renderCostBreakdown(data)}
-                  ${renderSubscriptionInfo(data.offerId)}
-                </div>
+                ${s.notes ? '<div class="text-muted" style="font-size:0.78rem;margin-top:4px;font-style:italic;">' + _esc(s.notes) + '</div>' : ''}
               </div>
-
-            </div>
-            <div class="modal-footer">
-              <button class="btn btn-cancel">Annuler</button>
-              <button class="btn btn-primary btn-save">
-                ${isEdit ? 'Enregistrer' : 'Créer la session'}
-              </button>
+              <div class="flex gap-8" style="align-items:center;flex-shrink:0;">
+                <span class="tag ${statusOpt.tag}">${statusOpt.label}</span>
+                <button class="btn btn-sm btn-edit-sess" data-id="${s.id}" title="Modifier">&#9998;</button>
+                <button class="btn btn-sm btn-del-sess" data-id="${s.id}" title="Supprimer">&#128465;</button>
+              </div>
             </div>
           </div>
         `;
-      }
-
-      overlay.innerHTML = buildModalContent();
-      document.body.appendChild(overlay);
-
-      /* ---- Collecte des valeurs courantes du formulaire ---- */
-      function gatherFormData() {
-        const form = overlay;
-        data.label  = (form.querySelector('#sess-label')  || {}).value || '';
-        data.date   = (form.querySelector('#sess-date')   || {}).value || '';
-        data.time   = (form.querySelector('#sess-time')   || {}).value || '';
-        data.status = (form.querySelector('#sess-status') || {}).value || 'planifiee';
-        data.price  = parseFloat((form.querySelector('#sess-price') || {}).value) || 0;
-        data.locationId  = (form.querySelector('#sess-location')   || {}).value || '';
-        data.offerId     = (form.querySelector('#sess-offer')      || {}).value || '';
-        data.notes       = (form.querySelector('#sess-notes')      || {}).value || '';
-
-        const recVal = (form.querySelector('#sess-recurrence') || {}).value;
-        data.recurrence = recVal || null;
-
-        // Checkboxes multi-select
-        data.clientIds = Array.from(form.querySelectorAll('input[name="clientIds"]:checked')).map(cb => cb.value);
-        data.moduleIds = Array.from(form.querySelectorAll('input[name="moduleIds"]:checked')).map(cb => cb.value);
-        data.operatorIds = Array.from(form.querySelectorAll('input[name="operatorIds"]:checked')).map(cb => cb.value);
-
-        // Coûts variables
-        data.variableCosts = [];
-        form.querySelectorAll('[data-vc-idx]').forEach(row => {
-          const lbl = (row.querySelector('.vc-label') || {}).value || '';
-          const amt = parseFloat((row.querySelector('.vc-amount') || {}).value) || 0;
-          data.variableCosts.push({ label: lbl, amount: amt });
-        });
-
-        return data;
-      }
-
-      /* ---- Rafraîchir le panneau de coûts et la compatibilité ---- */
-      function refreshRightPanel() {
-        gatherFormData();
-        // Re-rendre entièrement la modale pour refléter les changements
-        overlay.innerHTML = buildModalContent();
-        attachModalListeners();
-      }
-
-      /* ---- Écouteurs internes de la modale ---- */
-      function attachModalListeners() {
-        const form = overlay;
-
-        // Fermeture
-        const closeModal = () => { overlay.remove(); };
-        form.querySelector('.btn-close-modal').addEventListener('click', closeModal);
-        form.querySelector('.btn-cancel').addEventListener('click', closeModal);
-        overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
-
-        // Validation prix vs seuil plancher + affichage TTC si B2C
-        function validatePrice() {
-          const priceInput = form.querySelector('#sess-price');
-          const hint = form.querySelector('#sess-price-hint');
-          const ttcInfo = form.querySelector('#sess-price-ttc-info');
-          if (!priceInput || !hint) return;
-          const price = parseFloat(priceInput.value) || 0;
-          const seuilPlancher = typeof Engine.calculateSeuilPlancher === 'function' ? Engine.calculateSeuilPlancher() : 0;
-          if (price > 0 && seuilPlancher > 0 && price < seuilPlancher) {
-            priceInput.classList.add('field-invalid');
-            priceInput.classList.remove('field-valid');
-            hint.className = 'validation-hint hint-danger';
-            hint.textContent = 'Sous le seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
-          } else if (price > 0) {
-            priceInput.classList.add('field-valid');
-            priceInput.classList.remove('field-invalid');
-            hint.className = 'validation-hint hint-ok';
-            hint.textContent = 'Au-dessus du seuil plancher (' + Engine.fmt(seuilPlancher) + ')';
-          } else {
-            priceInput.classList.remove('field-valid', 'field-invalid');
-            hint.className = 'validation-hint';
-            hint.textContent = '';
-          }
-          // Afficher TTC si un client B2C est sélectionné
-          if (ttcInfo && price > 0) {
-            var selectedClients = [];
-            form.querySelectorAll('input[name="clientIds"]:checked').forEach(function(cb) {
-              var cl = DB.clients.getById(cb.value);
-              if (cl) selectedClients.push(cl);
-            });
-            var hasB2C = selectedClients.some(function(c) { return c.clientCategory === 'B2C'; });
-            if (hasB2C) {
-              var ttc = Engine.computeTTC(price);
-              var tva = Engine.computeMontantTVA(price);
-              ttcInfo.innerHTML = 'Client B2C : prix TTC = <strong>' + Engine.fmt(ttc) + '</strong> (TVA : ' + Engine.fmt(tva) + ')';
-              ttcInfo.style.color = 'var(--color-warning)';
-            } else {
-              ttcInfo.innerHTML = 'Client B2B : prix affiché HT';
-              ttcInfo.style.color = 'var(--text-muted)';
-            }
-          } else if (ttcInfo) {
-            ttcInfo.innerHTML = '';
-          }
-        }
-        const priceEl = form.querySelector('#sess-price');
-        if (priceEl) {
-          priceEl.addEventListener('input', validatePrice);
-          validatePrice();
-        }
-
-        // Champs qui déclenchent un recalcul des coûts
-        const recalcFields = [
-          '#sess-price', '#sess-location', '#sess-offer'
-        ];
-        recalcFields.forEach(sel => {
-          const el = form.querySelector(sel);
-          if (el) el.addEventListener('change', refreshRightPanel);
-        });
-
-        // Checkboxes modules, opérateurs, clients → recalcul
-        form.querySelectorAll('input[name="moduleIds"], input[name="operatorIds"], input[name="clientIds"]').forEach(cb => {
-          cb.addEventListener('change', () => { refreshRightPanel(); validatePrice(); });
-        });
-
-        // Coûts variables — montants → recalcul
-        form.querySelectorAll('.vc-amount').forEach(input => {
-          input.addEventListener('change', refreshRightPanel);
-        });
-
-        // Retirer un coût variable
-        form.querySelectorAll('.vc-remove').forEach(btn => {
-          btn.addEventListener('click', () => {
-            gatherFormData();
-            const idx = parseInt(btn.dataset.idx, 10);
-            data.variableCosts.splice(idx, 1);
-            overlay.innerHTML = buildModalContent();
-            attachModalListeners();
-          });
-        });
-
-        // Ajouter un coût variable
-        const btnAddVc = form.querySelector('#btn-add-vc');
-        if (btnAddVc) {
-          btnAddVc.addEventListener('click', () => {
-            gatherFormData();
-            data.variableCosts.push({ label: '', amount: 0 });
-            overlay.innerHTML = buildModalContent();
-            attachModalListeners();
-          });
-        }
-
-        // --- Sauvegarde ---
-        form.querySelector('.btn-save').addEventListener('click', () => {
-          gatherFormData();
-
-          // Validation minimale
-          if (!data.date) {
-            alert('Veuillez renseigner une date.');
-            return;
-          }
-
-          // Déterminer si le statut vient de passer à « terminee »
-          const previousStatus = session ? session.status : null;
-          const newStatus = data.status;
-          const justCompleted = (newStatus === 'terminee' && previousStatus !== 'terminee');
-
-          if (isEdit) {
-            DB.sessions.update(session.id, data);
-            Toast.show('Session mise à jour.', 'success');
-          } else {
-            DB.sessions.create(data);
-            Toast.show('Session créée.', 'success');
-          }
-
-          // Mise à jour consommation abonnement si la session passe à « terminée »
-          if (justCompleted && data.offerId) {
-            const offer = DB.offers.getById(data.offerId);
-            if (offer && offer.type === 'abonnement') {
-              const consumed = (offer.sessionsConsumed || 0) + 1;
-              DB.offers.update(offer.id, { sessionsConsumed: consumed });
-            }
-          }
-
-          // Si session redevient non-terminée depuis terminée (annulation de complétion)
-          if (isEdit && previousStatus === 'terminee' && newStatus !== 'terminee' && data.offerId) {
-            const offer = DB.offers.getById(data.offerId);
-            if (offer && offer.type === 'abonnement') {
-              const consumed = Math.max((offer.sessionsConsumed || 0) - 1, 0);
-              DB.offers.update(offer.id, { sessionsConsumed: consumed });
-            }
-          }
-
-          closeModal();
-          renderMain();
-        });
-      }
-
-      attachModalListeners();
+      }).join('');
     }
 
-    /* ==========================================================
-       Lancement du premier rendu
-       ========================================================== */
-    renderMain();
+    html += '</div>';
+    panel.innerHTML = html;
+
+    /* Bouton planifier ce jour */
+    const btnAdd = panel.querySelector('#btn-add-on-date');
+    if (btnAdd) {
+      btnAdd.addEventListener('click', () => _openFormModal(null, dateStr));
+    }
+
+    /* Actions modifier/supprimer */
+    panel.querySelectorAll('.btn-edit-sess').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = DB.sessions.getById(btn.dataset.id);
+        if (s) _openFormModal(s, null);
+      });
+    });
+    panel.querySelectorAll('.btn-del-sess').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = DB.sessions.getById(btn.dataset.id);
+        if (s) _confirmDelete(s);
+      });
+    });
   }
-};
+
+  /* === FORMULAIRE SIMPLIFI\u00c9 (cr\u00e9ation / modification) === */
+  function _openFormModal(session, presetDate) {
+    const isEdit = !!session;
+    const s = session || {};
+
+    const clients   = DB.clients.getAll().filter(c => c.active !== false);
+    const modules   = DB.modules.getAll().filter(m => m.active !== false);
+    const operators = DB.operators.getAll().filter(o => o.active !== false);
+    const locations = DB.locations.getAll().filter(l => l.active !== false);
+    const offers    = DB.offers.getAll().filter(o => o.active !== false);
+
+    const dateVal = s.date || presetDate || _isoDate(new Date());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:600px;">
+        <div class="modal-header">
+          <h2>${isEdit ? 'Modifier la session' : 'Planifier une session'}</h2>
+          <button class="btn btn-sm btn-ghost" id="fm-close">&times;</button>
+        </div>
+        <div class="modal-body">
+
+          <!-- Date / Heure -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="fm-date">Date *</label>
+              <input type="date" class="form-control" id="fm-date" value="${dateVal}" required />
+            </div>
+            <div class="form-group">
+              <label for="fm-time">Heure</label>
+              <input type="time" class="form-control" id="fm-time" value="${_escAttr(s.time || '')}" />
+            </div>
+            <div class="form-group">
+              <label for="fm-status">Statut</label>
+              <select class="form-control" id="fm-status">
+                ${STATUS_OPTIONS.map(so => `<option value="${so.value}" ${(s.status || 'planifiee') === so.value ? 'selected' : ''}>${so.label}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <!-- Libell\u00e9 -->
+          <div class="form-group">
+            <label for="fm-label">Libell\u00e9</label>
+            <input type="text" class="form-control" id="fm-label" value="${_escAttr(s.label || '')}" placeholder="Ex : Tir tactique Gendarmerie" />
+          </div>
+
+          <!-- Client -->
+          <div class="form-group">
+            <label for="fm-client">Client *</label>
+            <select class="form-control" id="fm-client" required>
+              <option value="">\u2014 S\u00e9lectionner un client \u2014</option>
+              ${clients.map(c => `<option value="${c.id}" ${(s.clientIds || []).includes(c.id) || s.clientId === c.id ? 'selected' : ''}>${_esc(c.name || c.id)}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Module -->
+          <div class="form-group">
+            <label for="fm-module">Module *</label>
+            <select class="form-control" id="fm-module" required>
+              <option value="">\u2014 S\u00e9lectionner un module \u2014</option>
+              ${modules.map(m => `<option value="${m.id}" ${(s.moduleIds || []).includes(m.id) ? 'selected' : ''}>${_esc(m.name || m.id)}${m.category ? ' (' + _esc(m.category) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Op\u00e9rateur -->
+          <div class="form-group">
+            <label for="fm-operator">Op\u00e9rateur *</label>
+            <select class="form-control" id="fm-operator" required>
+              <option value="">\u2014 S\u00e9lectionner un op\u00e9rateur \u2014</option>
+              ${operators.map(o => {
+                const name = ((o.firstName || '') + ' ' + (o.lastName || '')).trim();
+                const sel = (s.operatorIds || []).includes(o.id) ? 'selected' : '';
+                return `<option value="${o.id}" ${sel}>${_esc(name)} (${Engine.statusLabel(o.status)})</option>`;
+              }).join('')}
+            </select>
+          </div>
+
+          <!-- Op\u00e9rateurs suppl\u00e9mentaires -->
+          <div class="form-group">
+            <label>Op\u00e9rateurs suppl\u00e9mentaires</label>
+            <div id="fm-extra-ops" style="max-height:120px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;">
+              ${operators.map(o => {
+                const name = ((o.firstName || '') + ' ' + (o.lastName || '')).trim();
+                const isMain = (s.operatorIds || []).indexOf(o.id) === 0;
+                const checked = !isMain && (s.operatorIds || []).includes(o.id);
+                return `<label class="form-check" style="margin-bottom:4px;"><input type="checkbox" name="extra-ops" value="${o.id}" ${checked ? 'checked' : ''} /><span>${_esc(name)}</span></label>`;
+              }).join('')}
+            </div>
+            <span class="form-help">Cochez si plusieurs op\u00e9rateurs sont n\u00e9cessaires.</span>
+          </div>
+
+          <!-- Lieu -->
+          <div class="form-group">
+            <label for="fm-location">Lieu</label>
+            <select class="form-control" id="fm-location">
+              <option value="">\u2014 Aucun lieu \u2014</option>
+              ${locations.map(l => `<option value="${l.id}" ${s.locationId === l.id ? 'selected' : ''}>${_esc(l.name || l.id)}${l.city ? ' (' + _esc(l.city) + ')' : ''}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Offre li\u00e9e -->
+          <div class="form-group">
+            <label for="fm-offer">Offre li\u00e9e</label>
+            <select class="form-control" id="fm-offer">
+              <option value="">\u2014 Aucune \u2014</option>
+              ${offers.map(o => `<option value="${o.id}" ${s.offerId === o.id ? 'selected' : ''}>${_esc(o.label || o.name || o.id)}</option>`).join('')}
+            </select>
+          </div>
+
+          <!-- Prix -->
+          <div class="form-group">
+            <label for="fm-price">Prix factur\u00e9 HT (\u20ac)</label>
+            <input type="number" class="form-control" id="fm-price" value="${s.price || ''}" min="0" step="any" placeholder="0" />
+          </div>
+
+          <!-- Notes -->
+          <div class="form-group">
+            <label for="fm-notes">Notes</label>
+            <textarea class="form-control" id="fm-notes" rows="2" placeholder="Remarques...">${_esc(s.notes || '')}</textarea>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="fm-cancel">Annuler</button>
+          <button class="btn btn-primary" id="fm-save">${isEdit ? 'Enregistrer' : 'Planifier'}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    /* Fermeture */
+    const close = () => overlay.remove();
+    overlay.querySelector('#fm-close').addEventListener('click', close);
+    overlay.querySelector('#fm-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    /* Sauvegarde */
+    overlay.querySelector('#fm-save').addEventListener('click', () => {
+      const date = overlay.querySelector('#fm-date').value;
+      const clientId = overlay.querySelector('#fm-client').value;
+      const moduleId = overlay.querySelector('#fm-module').value;
+      const mainOpId = overlay.querySelector('#fm-operator').value;
+
+      if (!date) { _highlight(overlay.querySelector('#fm-date')); return; }
+      if (!clientId) { _highlight(overlay.querySelector('#fm-client')); return; }
+      if (!moduleId) { _highlight(overlay.querySelector('#fm-module')); return; }
+      if (!mainOpId) { _highlight(overlay.querySelector('#fm-operator')); return; }
+
+      /* Collecter les op\u00e9rateurs suppl\u00e9mentaires */
+      const operatorIds = [mainOpId];
+      overlay.querySelectorAll('input[name="extra-ops"]:checked').forEach(cb => {
+        if (cb.value !== mainOpId) operatorIds.push(cb.value);
+      });
+
+      const previousStatus = session ? session.status : null;
+      const newStatus = overlay.querySelector('#fm-status').value;
+
+      const data = {
+        date,
+        time:        overlay.querySelector('#fm-time').value || '',
+        label:       overlay.querySelector('#fm-label').value.trim(),
+        status:      newStatus,
+        clientIds:   [clientId],
+        moduleIds:   [moduleId],
+        operatorIds,
+        locationId:  overlay.querySelector('#fm-location').value || '',
+        offerId:     overlay.querySelector('#fm-offer').value || '',
+        price:       parseFloat(overlay.querySelector('#fm-price').value) || 0,
+        notes:       overlay.querySelector('#fm-notes').value.trim(),
+        variableCosts: isEdit ? (s.variableCosts || []) : []
+      };
+
+      if (isEdit) {
+        DB.sessions.update(session.id, data);
+        Toast.show('Session mise \u00e0 jour.', 'success');
+      } else {
+        DB.sessions.create(data);
+        Toast.show('Session planifi\u00e9e.', 'success');
+      }
+
+      /* Gestion abonnement */
+      const justCompleted = (newStatus === 'terminee' && previousStatus !== 'terminee');
+      if (justCompleted && data.offerId) {
+        const offer = DB.offers.getById(data.offerId);
+        if (offer && offer.type === 'abonnement') {
+          DB.offers.update(offer.id, { sessionsConsumed: (offer.sessionsConsumed || 0) + 1 });
+        }
+      }
+      if (isEdit && previousStatus === 'terminee' && newStatus !== 'terminee' && data.offerId) {
+        const offer = DB.offers.getById(data.offerId);
+        if (offer && offer.type === 'abonnement') {
+          DB.offers.update(offer.id, { sessionsConsumed: Math.max((offer.sessionsConsumed || 0) - 1, 0) });
+        }
+      }
+
+      close();
+      _selectedDate = data.date;
+      _renderPage();
+    });
+
+    overlay.querySelector('#fm-date').focus();
+  }
+
+  /* === SUPPRESSION === */
+  function _confirmDelete(session) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:440px;">
+        <div class="modal-header">
+          <h2>Supprimer la session</h2>
+          <button class="btn btn-sm btn-ghost" id="del-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Supprimer <strong>${_esc(session.label || 'cette session')}</strong> du ${_formatDateFr(session.date)} ?</p>
+          <p class="text-muted" style="margin-top:8px;font-size:0.82rem;">Cette action est irr\u00e9versible.</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="del-cancel">Annuler</button>
+          <button class="btn btn-primary" id="del-confirm" style="background:var(--accent-red);border-color:var(--accent-red);">Supprimer</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('#del-close').addEventListener('click', close);
+    overlay.querySelector('#del-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    overlay.querySelector('#del-confirm').addEventListener('click', () => {
+      DB.sessions.delete(session.id);
+      close();
+      _renderPage();
+      Toast.show('Session supprim\u00e9e.', 'warning');
+    });
+  }
+
+  /* === \u00c9V\u00c9NEMENTS === */
+  function _bindEvents(sessions) {
+    /* Navigation mois */
+    const btnPrev = _container.querySelector('#btn-prev-month');
+    const btnNext = _container.querySelector('#btn-next-month');
+    if (btnPrev) btnPrev.addEventListener('click', () => { _changeMonth(-1); });
+    if (btnNext) btnNext.addEventListener('click', () => { _changeMonth(1); });
+
+    /* Vue calendrier / liste */
+    const btnCal  = _container.querySelector('#btn-view-cal');
+    const btnList = _container.querySelector('#btn-view-list');
+    if (btnCal)  btnCal.addEventListener('click', () => { _viewMode = 'calendar'; _renderPage(); });
+    if (btnList) btnList.addEventListener('click', () => { _viewMode = 'list'; _renderPage(); });
+
+    /* Bouton planifier */
+    const btnAdd = _container.querySelector('#btn-add-session');
+    if (btnAdd) btnAdd.addEventListener('click', () => _openFormModal(null, null));
+
+    /* Filtre statut (liste) */
+    const filterSel = _container.querySelector('#filter-status-list');
+    if (filterSel) filterSel.addEventListener('change', (e) => { _filterStatus = e.target.value; _renderPage(); });
+
+    /* Clics sur les jours du calendrier */
+    _container.querySelectorAll('.cal-day:not(.cal-empty)').forEach(cell => {
+      cell.addEventListener('click', () => {
+        _selectedDate = cell.dataset.date;
+        /* Mettre \u00e0 jour la s\u00e9lection visuelle */
+        _container.querySelectorAll('.cal-day.cal-selected').forEach(c => c.classList.remove('cal-selected'));
+        cell.classList.add('cal-selected');
+        _renderDayDetail(_selectedDate, sessions);
+      });
+    });
+
+    /* Actions dans la liste */
+    _container.querySelectorAll('.btn-edit-sess').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = DB.sessions.getById(btn.dataset.id);
+        if (s) _openFormModal(s, null);
+      });
+    });
+    _container.querySelectorAll('.btn-del-sess').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = DB.sessions.getById(btn.dataset.id);
+        if (s) _confirmDelete(s);
+      });
+    });
+
+    /* Afficher le d\u00e9tail du jour s\u00e9lectionn\u00e9 */
+    if (_selectedDate) {
+      _renderDayDetail(_selectedDate, sessions);
+    }
+  }
+
+  function _changeMonth(delta) {
+    _viewMonth += delta;
+    if (_viewMonth > 11) { _viewMonth = 0; _viewYear++; }
+    if (_viewMonth < 0) { _viewMonth = 11; _viewYear--; }
+    _selectedDate = null;
+    _renderPage();
+  }
+
+  /* === UTILITAIRES === */
+
+  function _clientName(ids) {
+    if (!ids || ids.length === 0) return '\u2014';
+    return ids.map(id => {
+      const c = DB.clients.getById(id);
+      return c ? (c.name || c.id) : '\u2014';
+    }).join(', ');
+  }
+
+  function _moduleNames(ids) {
+    if (!ids || ids.length === 0) return '\u2014';
+    return ids.map(id => {
+      const m = DB.modules.getById(id);
+      return m ? (m.name || m.id) : '\u2014';
+    }).join(', ');
+  }
+
+  function _operatorNames(ids) {
+    if (!ids || ids.length === 0) return '\u2014';
+    return ids.map(id => {
+      const o = DB.operators.getById(id);
+      return o ? ((o.firstName || '') + ' ' + (o.lastName || '')).trim() : '\u2014';
+    }).join(', ');
+  }
+
+  function _locationName(id) {
+    if (!id) return '\u2014';
+    const l = DB.locations.getById(id);
+    return l ? (l.name || l.id) : '\u2014';
+  }
+
+  function _statusTag(status) {
+    const opt = STATUS_OPTIONS.find(so => so.value === status);
+    return opt ? opt.tag : 'tag-neutral';
+  }
+
+  function _statusLabel(status) {
+    const opt = STATUS_OPTIONS.find(so => so.value === status);
+    return opt ? opt.label : status || '\u2014';
+  }
+
+  function _statusColor(status) {
+    const map = {
+      planifiee: 'var(--color-info)',
+      confirmee: 'var(--color-success)',
+      en_cours:  'var(--color-warning)',
+      terminee:  'var(--text-muted)',
+      annulee:   'var(--accent-red)'
+    };
+    return map[status] || 'var(--text-muted)';
+  }
+
+  function _isoDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function _formatDateFr(iso) {
+    if (!iso) return '\u2014';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (e) { return iso; }
+  }
+
+  function _esc(str) {
+    if (!str) return '';
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  function _escAttr(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function _highlight(el) {
+    if (!el) return;
+    el.style.borderColor = 'var(--accent-red)';
+    el.focus();
+    setTimeout(() => { el.style.borderColor = ''; }, 2000);
+  }
+
+  return { render };
+})();
