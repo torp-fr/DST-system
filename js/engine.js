@@ -1298,6 +1298,65 @@ const Engine = (() => {
     };
   }
 
+  /* === RENTABILITÉ PAR CLIENT === */
+  function computeClientProfitability(clientId) {
+    const sessions = DB.sessions.getAll().filter(s => {
+      return (s.clientIds && s.clientIds.includes(clientId)) || s.clientId === clientId;
+    });
+
+    const result = {
+      totalSessions: sessions.length,
+      completedSessions: 0,
+      totalRevenue: 0,
+      totalCosts: 0,
+      netResult: 0,
+      rentabilityPercent: 0,
+      avgMargin: 0,
+      status: 'Pas de données'
+    };
+
+    if (sessions.length === 0) return result;
+
+    let totalMargin = 0;
+    let countMargin = 0;
+
+    sessions.forEach(s => {
+      if (s.status === 'terminee') {
+        result.completedSessions++;
+      }
+
+      if (s.price > 0 || s.price === 0) {
+        // Calculer le coût de la session
+        const cost = computeSessionCost(s);
+        result.totalRevenue += (s.price || 0);
+        result.totalCosts += cost.totalCost;
+        totalMargin += cost.margin;
+        countMargin++;
+      }
+    });
+
+    result.avgMargin = countMargin > 0 ? round2(totalMargin / countMargin) : 0;
+    result.netResult = round2(result.totalRevenue - result.totalCosts);
+    result.rentabilityPercent = result.totalRevenue > 0
+      ? round2((result.netResult / result.totalRevenue) * 100)
+      : 0;
+
+    // Déterminer le statut
+    if (result.completedSessions === 0) {
+      result.status = 'En cours';
+    } else if (result.rentabilityPercent >= 30) {
+      result.status = '✓ Très rentable';
+    } else if (result.rentabilityPercent >= 15) {
+      result.status = '✓ Rentable';
+    } else if (result.rentabilityPercent >= 0) {
+      result.status = '⚠ Acceptable';
+    } else {
+      result.status = '✗ Déficitaire';
+    }
+
+    return result;
+  }
+
   /* --- API publique --- */
   return {
     netToCompanyCost,
@@ -1308,6 +1367,7 @@ const Engine = (() => {
     computeOfferFloor,
     computeAllAlerts,
     computeDashboardKPIs,
+    computeClientProfitability,
     calculateSeuilPlancher,
     calculatePointMort,
     calculateTresorerie,
