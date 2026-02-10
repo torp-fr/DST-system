@@ -15,7 +15,7 @@ Views.Sessions = (() => {
   let _viewYear  = new Date().getFullYear();
   let _viewMonth = new Date().getMonth(); // 0-indexed
   let _selectedDate = null;               // 'YYYY-MM-DD' ou null
-  let _viewMode = 'calendar';             // 'calendar' | 'list'
+  let _viewMode = 'calendar';             // 'calendar' | 'annual' | 'list'
   let _filterStatus = '';
 
   /* --- Constantes --- */
@@ -59,6 +59,7 @@ Views.Sessions = (() => {
       <div class="page-header">
         <h1>Planning</h1>
         <div class="actions">
+          <button class="btn btn-sm ${_viewMode === 'annual' ? 'btn-primary' : ''}" id="btn-view-annual">Vue annuelle</button>
           <button class="btn btn-sm ${_viewMode === 'calendar' ? 'btn-primary' : ''}" id="btn-view-cal">Calendrier</button>
           <button class="btn btn-sm ${_viewMode === 'list' ? 'btn-primary' : ''}" id="btn-view-list">Liste</button>
           <button class="btn btn-primary" id="btn-add-session">+ Planifier</button>
@@ -89,11 +90,11 @@ Views.Sessions = (() => {
 
       <!-- Contenu : calendrier ou liste -->
       <div id="planning-content">
-        ${_viewMode === 'calendar' ? _renderCalendar(sessions) : _renderList(sessions)}
+        ${_viewMode === 'annual' ? _renderAnnual(sessions) : (_viewMode === 'calendar' ? _renderCalendar(sessions) : _renderList(sessions))}
       </div>
 
       <!-- D\u00e9tail du jour s\u00e9lectionn\u00e9 -->
-      <div id="day-detail"></div>
+      ${_viewMode === 'calendar' ? '<div id="day-detail"></div>' : ''}
     `;
 
     _bindEvents(sessions);
@@ -173,6 +174,90 @@ Views.Sessions = (() => {
           ${dots}
         </div>
       `;
+    }
+
+    html += '</div></div>';
+    return html;
+  }
+
+  /* === VUE ANNUELLE === */
+  function _renderAnnual(sessions) {
+    const byDate = {};
+    sessions.forEach(s => {
+      if (!s.date) return;
+      if (!byDate[s.date]) byDate[s.date] = [];
+      byDate[s.date].push(s);
+    });
+
+    let html = `
+      <div class="card">
+        <div class="flex-between mb-16">
+          <h2 style="font-size:1.1rem;">Année ${_viewYear}</h2>
+          <div class="flex gap-8">
+            <button class="btn btn-sm" id="btn-prev-year">&larr;</button>
+            <button class="btn btn-sm" id="btn-next-year">&rarr;</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;">
+    `;
+
+    for (let m = 0; m < 12; m++) {
+      const monthSessions = sessions.filter(s => {
+        if (!s.date) return false;
+        const d = new Date(s.date);
+        return d.getFullYear() === _viewYear && d.getMonth() === m;
+      });
+
+      const monthCount = monthSessions.length;
+      const confirmedCount = monthSessions.filter(s => s.status === 'confirmee' || s.status === 'en_cours').length;
+
+      html += _renderMiniCalendar(m, _viewYear, byDate, monthCount, confirmedCount);
+    }
+
+    html += '</div></div>';
+    return html;
+  }
+
+  /* === MINI-CALENDRIER POUR VUE ANNUELLE === */
+  function _renderMiniCalendar(month, year, byDate, monthCount, confirmedCount) {
+    const firstDay = new Date(year, month, 1);
+    const lastDay  = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+
+    let startWeekday = firstDay.getDay() - 1;
+    if (startWeekday < 0) startWeekday = 6;
+
+    let html = `
+      <div class="mini-cal-container">
+        <div style="padding:12px;border-bottom:1px solid var(--border-color);cursor:pointer;transition:all var(--transition-normal);" class="mini-cal-header" data-month="${month}">
+          <div style="font-weight:700;color:var(--text-heading);margin-bottom:4px;">${MONTHS_FR[month]}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);">
+            ${monthCount} session${monthCount > 1 ? 's' : ''} • ${confirmedCount} confirmées
+          </div>
+        </div>
+        <div class="mini-cal-grid">
+          ${DAYS_FR.map(d => `<div class="mini-cal-header-day">${d.substring(0,1)}</div>`).join('')}
+    `;
+
+    for (let i = 0; i < startWeekday; i++) {
+      html += '<div class="mini-cal-day mini-cal-empty"></div>';
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+      const daySessions = byDate[dateStr] || [];
+      const hasItems = daySessions.length > 0;
+
+      let classes = 'mini-cal-day';
+      if (hasItems) classes += ' mini-cal-has-items';
+
+      let content = `<span class="mini-cal-day-num">${day}</span>`;
+      if (hasItems) {
+        const dot = `<span class="mini-cal-dot" style="background:${_statusColor(daySessions[0].status)};"></span>`;
+        content += dot;
+      }
+
+      html += `<div class="${classes}" data-date="${dateStr}">${content}</div>`;
     }
 
     html += '</div></div>';
@@ -600,11 +685,19 @@ Views.Sessions = (() => {
     if (btnPrev) btnPrev.addEventListener('click', () => { _changeMonth(-1); });
     if (btnNext) btnNext.addEventListener('click', () => { _changeMonth(1); });
 
-    /* Vue calendrier / liste */
+    /* Navigation année */
+    const btnPrevYear = _container.querySelector('#btn-prev-year');
+    const btnNextYear = _container.querySelector('#btn-next-year');
+    if (btnPrevYear) btnPrevYear.addEventListener('click', () => { _viewYear--; _renderPage(); });
+    if (btnNextYear) btnNextYear.addEventListener('click', () => { _viewYear++; _renderPage(); });
+
+    /* Vue calendrier / liste / annuelle */
     const btnCal  = _container.querySelector('#btn-view-cal');
     const btnList = _container.querySelector('#btn-view-list');
-    if (btnCal)  btnCal.addEventListener('click', () => { _viewMode = 'calendar'; _renderPage(); });
+    const btnAnnual = _container.querySelector('#btn-view-annual');
+    if (btnCal)  btnCal.addEventListener('click', () => { _viewMode = 'calendar'; _selectedDate = null; _renderPage(); });
     if (btnList) btnList.addEventListener('click', () => { _viewMode = 'list'; _renderPage(); });
+    if (btnAnnual) btnAnnual.addEventListener('click', () => { _viewMode = 'annual'; _renderPage(); });
 
     /* Bouton planifier */
     const btnAdd = _container.querySelector('#btn-add-session');
@@ -639,6 +732,15 @@ Views.Sessions = (() => {
       });
     });
 
+    /* Mini calendrier - cliquer sur un mois pour le voir en détail */
+    _container.querySelectorAll(".mini-cal-header").forEach(header => {
+      header.addEventListener("click", () => {
+        _viewMonth = parseInt(header.dataset.month);
+        _viewMode = "calendar";
+        _selectedDate = null;
+        _renderPage();
+      });
+    });
     /* Afficher le d\u00e9tail du jour s\u00e9lectionn\u00e9 */
     if (_selectedDate) {
       _renderDayDetail(_selectedDate, sessions);
