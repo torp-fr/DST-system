@@ -167,6 +167,14 @@ Views.Clients = (() => {
       const isExpanded = _expandedClientId === client.id;
       const locationCount = DB.locations.filter(l => l.clientId === client.id).length;
 
+      // Profitabilité du client
+      const profitability = Engine.computeClientProfitability(client.id);
+      const profitabilityClass = profitability.rentabilityPercent >= 30 ? 'tag-green'
+        : profitability.rentabilityPercent >= 15 ? 'tag-yellow'
+        : profitability.rentabilityPercent >= 0 ? 'tag-orange'
+        : 'tag-red';
+      const profitabilityLabel = profitability.rentabilityPercent.toFixed(1) + '%';
+
       return `
         <tr class="client-row ${isExpanded ? 'active' : ''}" data-id="${client.id}" style="cursor:pointer;">
           <td>
@@ -182,6 +190,9 @@ Views.Clients = (() => {
           <td>${_escapeHtml(client.city || '—')}</td>
           <td class="num">${sessCount}</td>
           <td class="num">${locationCount}</td>
+          <td>
+            <span class="tag ${profitabilityClass}">${profitabilityLabel}</span>
+          </td>
           <td>
             ${client.active !== false
               ? '<span class="tag tag-green">Actif</span>'
@@ -206,6 +217,7 @@ Views.Clients = (() => {
               <th>Ville</th>
               <th>Sessions</th>
               <th>Lieux</th>
+              <th>Rentabilité</th>
               <th>Statut</th>
               <th class="text-right">Actions</th>
             </tr>

@@ -537,46 +537,6 @@ Views.Dashboard = {
        8. ACTIONS RAPIDES — Raccourcis de navigation
        ---------------------------------------------------------- */
 
-    function buildQuickActionsHTML() {
-      return `
-        <div class="card quick-actions-card">
-          <div class="card-header">
-            <h2>Actions rapides</h2>
-          </div>
-          <div class="quick-actions-grid">
-            <button class="quick-action-btn" data-action="wizard">
-              <span class="qa-icon">&#9654;</span>
-              <div>
-                <strong>Parcours guidé</strong>
-                <small>Client → Offre → Session → Suivi</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-client">
-              <span class="qa-icon">&#128100;</span>
-              <div>
-                <strong>Nouveau client</strong>
-                <small>Ajouter un client B2B/B2C</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-session">
-              <span class="qa-icon">&#128197;</span>
-              <div>
-                <strong>Nouvelle session</strong>
-                <small>Planifier une formation</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-operator">
-              <span class="qa-icon">&#128736;</span>
-              <div>
-                <strong>Nouvel opérateur</strong>
-                <small>Ajouter au vivier RH</small>
-              </div>
-            </button>
-          </div>
-        </div>
-      `;
-    }
-
     container.innerHTML = `
       <div class="page-header">
         <div>
@@ -584,9 +544,6 @@ Views.Dashboard = {
           <span class="text-muted" style="font-size:0.82rem;">${escapeHTML(today)} — Poste de commandement stratégique</span>
         </div>
       </div>
-
-      <!-- Actions rapides -->
-      ${buildQuickActionsHTML()}
 
       <!-- Indicateurs clés -->
       ${kpiCardsHTML}
@@ -609,23 +566,5 @@ Views.Dashboard = {
       </div>
     `;
 
-    /* ----------------------------------------------------------
-       9. ÉVÉNEMENTS — Actions rapides
-       ---------------------------------------------------------- */
-
-    container.querySelectorAll('.quick-action-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var action = btn.dataset.action;
-        if (action === 'wizard') {
-          if (typeof window.DST_Wizard === 'function') window.DST_Wizard();
-        } else if (action === 'new-client') {
-          App.navigate('clients');
-        } else if (action === 'new-session') {
-          App.navigate('sessions');
-        } else if (action === 'new-operator') {
-          App.navigate('operators');
-        }
-      });
-    });
   }
 };
