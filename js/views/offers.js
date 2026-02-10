@@ -187,22 +187,12 @@ Views.Offers = {
           };
           const encaissementLabel = encaissementMap[offer.paymentTerms] || (offer.paymentTerms || '—');
 
-          /* Sessions (affiché uniquement pour abonnements) */
+          /* Sessions — nombre défini dans l'offre (pas de suivi ici) */
           let sessionsHtml = '<span class="text-muted">—</span>';
-          if (offer.type === 'abonnement' && offer.nbSessions > 0) {
-            const consumed = offer.sessionsConsumed || 0;
-            const total = offer.nbSessions;
-            const remaining = sessionsRemaining(offer);
-            const pct = progressPercent(consumed, total);
-            const color = progressColor(consumed, total);
-            sessionsHtml = `
-              <div style="min-width:110px;">
-                <span class="text-mono">${consumed} / ${total}</span>
-                <span class="text-muted" style="font-size:0.72rem;"> (reste ${remaining})</span>
-                <div class="progress-bar mt-8">
-                  <div class="progress-fill ${color}" style="width:${pct}%;"></div>
-                </div>
-              </div>`;
+          if (offer.type === 'one_shot') {
+            sessionsHtml = '<span class="num">1</span>';
+          } else if (offer.type === 'abonnement' && offer.nbSessions > 0) {
+            sessionsHtml = `<span class="num">${offer.nbSessions}</span>`;
           }
 
           /* Statut */
@@ -315,7 +305,6 @@ Views.Offers = {
         paymentTerms: original.paymentTerms || 'comptant',
         nbSessions: original.nbSessions || 0,
         recurrence: original.recurrence || null,
-        sessionsConsumed: 0,
         startDate: original.startDate || '',
         endDate: original.endDate || '',
         notes: original.notes || '',
@@ -362,7 +351,6 @@ Views.Offers = {
         paymentTerms: offer ? (offer.paymentTerms || 'comptant') : 'comptant',
         nbSessions: offer ? (offer.nbSessions || 0) : 0,
         recurrence: offer ? (offer.recurrence || '') : '',
-        sessionsConsumed: offer ? (offer.sessionsConsumed || 0) : 0,
         startDate: offer ? (offer.startDate || '') : '',
         endDate: offer ? (offer.endDate || '') : '',
         notes: offer ? (offer.notes || '') : '',
@@ -496,12 +484,6 @@ Views.Offers = {
                       ${recurrenceOptions}
                     </select>
                   </div>
-                  ${isEdit ? `
-                  <div class="form-group">
-                    <label for="offer-sessions-consumed">Sessions consomm\u00e9es</label>
-                    <input type="number" id="offer-sessions-consumed" class="form-control" min="0" step="any"
-                           value="${data.sessionsConsumed}">
-                  </div>` : ''}
                 </div>
               </div>
 
@@ -668,9 +650,6 @@ Views.Offers = {
         const recurrenceEl = overlay.querySelector('#offer-recurrence');
         const recurrence = recurrenceEl ? (recurrenceEl.value || null) : null;
 
-        const sessConsumedEl = overlay.querySelector('#offer-sessions-consumed');
-        const sessionsConsumed = sessConsumedEl ? (parseInt(sessConsumedEl.value, 10) || 0) : (isEdit ? data.sessionsConsumed : 0);
-
         /* Modules sélectionnés */
         const selectedModuleIds = [];
         overlay.querySelectorAll('input[name="offer-modules"]:checked').forEach(cb => {
@@ -698,7 +677,6 @@ Views.Offers = {
           paymentTerms,
           nbSessions: type === 'abonnement' ? nbSessions : 0,
           recurrence: type === 'abonnement' ? recurrence : null,
-          sessionsConsumed: type === 'abonnement' ? sessionsConsumed : 0,
           startDate,
           endDate,
           notes,
