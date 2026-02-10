@@ -512,6 +512,71 @@ Views.Dashboard = {
     }
 
     /* ----------------------------------------------------------
+       5B. TABLEAU ABONNEMENTS CLIENTS
+       ---------------------------------------------------------- */
+
+    function buildClientSubscriptionsHTML() {
+      const subscriptions = DB.clientSubscriptions.getAll();
+      if (subscriptions.length === 0) {
+        return `
+          <div class="card">
+            <div class="card-header"><h2>Suivi des abonnements personnalisés</h2></div>
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <p>Aucun abonnement client personnalisé pour le moment.</p>
+            </div>
+          </div>
+        `;
+      }
+
+      let rows = subscriptions.map(sub => {
+        const client = DB.clients.getById(sub.clientId);
+        const offer = DB.offers.getById(sub.offerId);
+        const clientName = client ? (client.name || '(sans nom)') : '(client supprimé)';
+        const offerName = offer ? (offer.label || '(sans nom)') : '(offre supprimée)';
+        const rhythms = { 'mensuel': 'Mensuel', 'bimensuel': 'Bimensuel', 'hebdomadaire': 'Hebdo.', 'trimestriel': 'Trim.' };
+        const rhythm = rhythms[sub.rythme] || sub.rythme || '—';
+
+        return `
+          <tr>
+            <td><strong>${escapeHTML(clientName)}</strong></td>
+            <td>${escapeHTML(offerName)}</td>
+            <td class="num">${sub.participants || 1}</td>
+            <td><small>${rhythm}</small></td>
+            <td class="num">${Engine.fmt(sub.prixPersonnalise || 0)}</td>
+            <td class="num">${sub.volumeJours || '—'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      return `
+        <div class="card">
+          <div class="card-header">
+            <h2>Suivi des abonnements personnalisés</h2>
+            <span class="text-muted" style="font-size:0.82rem;">${subscriptions.length} abonnement(s)</span>
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Offre</th>
+                  <th>Participants</th>
+                  <th>Rythme</th>
+                  <th class="text-right">Prix HT/an</th>
+                  <th class="text-right">Sessions/an</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    /* ----------------------------------------------------------
        6. UTILITAIRE — Échappement HTML
        ---------------------------------------------------------- */
 
@@ -553,6 +618,9 @@ Views.Dashboard = {
 
       <!-- Alertes intelligentes -->
       ${buildAlertsHTML()}
+
+      <!-- Tableau suivi abonnements clients -->
+      ${buildClientSubscriptionsHTML()}
 
       <!-- Prochaines sessions + Synthèse économique -->
       <div class="grid-2">
