@@ -94,7 +94,6 @@ Views.Offers = {
         const q = searchTerm.toLowerCase();
         filtered = filtered.filter(o =>
           (o.label || '').toLowerCase().includes(q) ||
-          (o.clientIds || []).some(cid => clientLabel(cid).toLowerCase().includes(q)) ||
           (o.notes || '').toLowerCase().includes(q)
         );
       }
@@ -168,7 +167,7 @@ Views.Offers = {
                   <tr>
                     <th>Libell\u00e9</th>
                     <th>Type</th>
-                    <th>Client(s)</th>
+                    <th>Encaissement</th>
                     <th>Prix</th>
                     <th>Sessions</th>
                     <th>Statut</th>
@@ -178,8 +177,15 @@ Views.Offers = {
                 <tbody>`;
 
         filtered.forEach(offer => {
-          /* Clients liés */
-          const clientNames = (offer.clientIds || []).map(cid => esc(clientLabel(cid))).join(', ') || '<span class="text-muted">—</span>';
+          /* Modalités d'encaissement */
+          const encaissementMap = {
+            'comptant': '✓ Comptant',
+            'mensuel': 'Mensuel',
+            '2x': '2 fois',
+            '3x': '3 fois',
+            '4x': '4 fois'
+          };
+          const encaissementLabel = encaissementMap[offer.paymentTerms] || (offer.paymentTerms || '—');
 
           /* Sessions (affiché uniquement pour abonnements) */
           let sessionsHtml = '<span class="text-muted">—</span>';
@@ -209,7 +215,7 @@ Views.Offers = {
                   <tr>
                     <td><strong>${esc(offer.label || '(sans nom)')}</strong></td>
                     <td><span class="tag ${tagClass(offer.type)}">${esc(Engine.offerTypeLabel(offer.type))}</span></td>
-                    <td>${clientNames}</td>
+                    <td><small>${esc(encaissementLabel)}</small></td>
                     <td class="num">${Engine.fmt(offer.price || 0)} <small class="text-muted">${(() => {
                       var clients = (offer.clientIds || []).map(function(cid) { return DB.clients.getById(cid); }).filter(Boolean);
                       return clients.some(function(c) { return c.clientCategory === 'B2C'; }) ? 'TTC' : 'HT';
@@ -306,6 +312,7 @@ Views.Offers = {
         clientIds: [...(original.clientIds || [])],
         moduleIds: [...(original.moduleIds || [])],
         price: original.price || 0,
+        paymentTerms: original.paymentTerms || 'comptant',
         nbSessions: original.nbSessions || 0,
         recurrence: original.recurrence || null,
         sessionsConsumed: 0,
@@ -352,6 +359,7 @@ Views.Offers = {
         clientIds: offer ? [...(offer.clientIds || [])] : [],
         moduleIds: offer ? [...(offer.moduleIds || [])] : [],
         price: offer ? (offer.price || 0) : 0,
+        paymentTerms: offer ? (offer.paymentTerms || 'comptant') : 'comptant',
         nbSessions: offer ? (offer.nbSessions || 0) : 0,
         recurrence: offer ? (offer.recurrence || '') : '',
         sessionsConsumed: offer ? (offer.sessionsConsumed || 0) : 0,
@@ -456,6 +464,16 @@ Views.Offers = {
                   <span class="form-help" id="floor-hint"></span>
                 </div>
                 <div class="form-group">
+                  <label for="offer-payment">Modalités d'encaissement</label>
+                  <select id="offer-payment" class="form-control">
+                    <option value="comptant" ${data.paymentTerms === 'comptant' ? 'selected' : ''}>✓ Comptant</option>
+                    <option value="mensuel" ${data.paymentTerms === 'mensuel' ? 'selected' : ''}>Mensuel</option>
+                    <option value="2x" ${data.paymentTerms === '2x' ? 'selected' : ''}>2 fois</option>
+                    <option value="3x" ${data.paymentTerms === '3x' ? 'selected' : ''}>3 fois</option>
+                    <option value="4x" ${data.paymentTerms === '4x' ? 'selected' : ''}>4 fois</option>
+                  </select>
+                </div>
+                <div class="form-group">
                   <label>Statut</label>
                   <select id="offer-active" class="form-control">
                     <option value="true" ${data.active ? 'selected' : ''}>Active</option>
@@ -496,15 +514,6 @@ Views.Offers = {
                   <label for="offer-end-date">Date de fin</label>
                   <input type="date" id="offer-end-date" class="form-control" value="${esc(data.endDate)}">
                 </div>
-              </div>
-
-              <!-- Affectation clients -->
-              <div class="form-group">
-                <label>Client(s) associ\u00e9(s)</label>
-                <div id="clients-checkbox-list">
-                  ${clientCheckboxes}
-                </div>
-                <span class="form-help">Une offre peut \u00eatre mutualis\u00e9e entre plusieurs clients.</span>
               </div>
 
               <!-- Affectation modules -->
@@ -646,6 +655,7 @@ Views.Offers = {
 
         const type = overlay.querySelector('#offer-type').value;
         const price = parseFloat(overlay.querySelector('#offer-price').value) || 0;
+        const paymentTerms = overlay.querySelector('#offer-payment').value;
         const active = overlay.querySelector('#offer-active').value === 'true';
         const startDate = overlay.querySelector('#offer-start-date').value;
         const endDate = overlay.querySelector('#offer-end-date').value;
@@ -660,12 +670,6 @@ Views.Offers = {
 
         const sessConsumedEl = overlay.querySelector('#offer-sessions-consumed');
         const sessionsConsumed = sessConsumedEl ? (parseInt(sessConsumedEl.value, 10) || 0) : (isEdit ? data.sessionsConsumed : 0);
-
-        /* Clients sélectionnés */
-        const selectedClientIds = [];
-        overlay.querySelectorAll('input[name="offer-clients"]:checked').forEach(cb => {
-          selectedClientIds.push(cb.value);
-        });
 
         /* Modules sélectionnés */
         const selectedModuleIds = [];
@@ -688,9 +692,10 @@ Views.Offers = {
         const offerData = {
           label,
           type,
-          clientIds: selectedClientIds,
+          clientIds: [...(data.clientIds || [])],
           moduleIds: selectedModuleIds,
           price,
+          paymentTerms,
           nbSessions: type === 'abonnement' ? nbSessions : 0,
           recurrence: type === 'abonnement' ? recurrence : null,
           sessionsConsumed: type === 'abonnement' ? sessionsConsumed : 0,
