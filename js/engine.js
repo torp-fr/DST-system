@@ -601,26 +601,57 @@ const Engine = (() => {
    * Calcule le prix plancher d'une offre en fonction des sessions prévues.
    */
   function computeOfferFloor(offer) {
-    let totalCost = 0;
+    let costPerSession = 0;
     const nbSessions = offer.nbSessions || 1;
+    const s = DB.settings.get();
+    const estSessions = Math.max(s.estimatedAnnualSessions, 1);
 
-    // Estimer le coût moyen par session
+    // 1. Coûts modules
     if (offer.moduleIds && offer.moduleIds.length > 0) {
       offer.moduleIds.forEach(modId => {
         const mod = DB.modules.getById(modId);
-        if (mod) totalCost += (mod.fixedCost || 0) + (mod.variableCost || 0);
+        if (mod) costPerSession += (mod.fixedCost || 0) + (mod.variableCost || 0);
       });
     }
 
-    const s = DB.settings.get();
-    const totalFixed = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
-    const estSessions = Math.max(s.estimatedAnnualSessions, 1);
-    const fixedShare = totalFixed / estSessions;
+    // 2. Quote-part coûts fixes annuels
+    const totalFixedAnnual = s.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+    const fixedShare = round2(totalFixedAnnual / estSessions);
+    costPerSession += fixedShare;
 
-    totalCost += fixedShare;
-    totalCost *= nbSessions;
+    // 3. Quote-part amortissements
+    const totalAmort = s.equipmentAmortization.reduce((sum, a) => {
+      const years = Math.max(a.durationYears || 1, 1);
+      return sum + ((a.amount || 0) / years);
+    }, 0);
+    const amortShare = round2(totalAmort / estSessions);
+    costPerSession += amortShare;
 
-    return round2(totalCost * 1.05); // +5% seuil sécurité
+    // 4. Coûts opérateurs estimés (moyenne du pool)
+    // Utilise le coût moyen de tous les opérateurs disponibles
+    const allOperators = DB.operators.getAll();
+    let avgOperatorCost = 0;
+    if (allOperators.length > 0) {
+      let totalOperatorCost = 0;
+      allOperators.forEach(op => {
+        totalOperatorCost += getOperatorDailyCost(op, s);
+      });
+      avgOperatorCost = round2(totalOperatorCost / allOperators.length);
+    }
+    // Assume 1 operator per session by default, configurable via settings
+    const estimatedOperatorsPerSession = s.estimatedOperatorsPerSession || 1;
+    costPerSession += avgOperatorCost * estimatedOperatorsPerSession;
+
+    // 5. Coûts variables par défaut par session
+    const defaultVariableCosts = (s.defaultSessionVariableCosts || []).reduce((sum, vc) => sum + (vc.amount || 0), 0);
+    costPerSession += defaultVariableCosts;
+
+    // 6. Coût total par session et pour l'offre
+    const totalCost = round2(costPerSession * nbSessions);
+
+    // Appliquer marge de sécurité (par défaut 5%, configurable)
+    const marginPercent = s.floorPriceMargin || 5;
+    return round2(totalCost * (1 + marginPercent / 100));
   }
 
   /* ----------------------------------------------------------
@@ -1298,6 +1329,65 @@ const Engine = (() => {
     };
   }
 
+  /* === RENTABILITÉ PAR CLIENT === */
+  function computeClientProfitability(clientId) {
+    const sessions = DB.sessions.getAll().filter(s => {
+      return (s.clientIds && s.clientIds.includes(clientId)) || s.clientId === clientId;
+    });
+
+    const result = {
+      totalSessions: sessions.length,
+      completedSessions: 0,
+      totalRevenue: 0,
+      totalCosts: 0,
+      netResult: 0,
+      rentabilityPercent: 0,
+      avgMargin: 0,
+      status: 'Pas de données'
+    };
+
+    if (sessions.length === 0) return result;
+
+    let totalMargin = 0;
+    let countMargin = 0;
+
+    sessions.forEach(s => {
+      if (s.status === 'terminee') {
+        result.completedSessions++;
+      }
+
+      if (s.price > 0 || s.price === 0) {
+        // Calculer le coût de la session
+        const cost = computeSessionCost(s);
+        result.totalRevenue += (s.price || 0);
+        result.totalCosts += cost.totalCost;
+        totalMargin += cost.margin;
+        countMargin++;
+      }
+    });
+
+    result.avgMargin = countMargin > 0 ? round2(totalMargin / countMargin) : 0;
+    result.netResult = round2(result.totalRevenue - result.totalCosts);
+    result.rentabilityPercent = result.totalRevenue > 0
+      ? round2((result.netResult / result.totalRevenue) * 100)
+      : 0;
+
+    // Déterminer le statut
+    if (result.completedSessions === 0) {
+      result.status = 'En cours';
+    } else if (result.rentabilityPercent >= 30) {
+      result.status = '✓ Très rentable';
+    } else if (result.rentabilityPercent >= 15) {
+      result.status = '✓ Rentable';
+    } else if (result.rentabilityPercent >= 0) {
+      result.status = '⚠ Acceptable';
+    } else {
+      result.status = '✗ Déficitaire';
+    }
+
+    return result;
+  }
+
   /* --- API publique --- */
   return {
     netToCompanyCost,
@@ -1308,6 +1398,7 @@ const Engine = (() => {
     computeOfferFloor,
     computeAllAlerts,
     computeDashboardKPIs,
+    computeClientProfitability,
     calculateSeuilPlancher,
     calculatePointMort,
     calculateTresorerie,

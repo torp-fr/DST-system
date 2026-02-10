@@ -125,8 +125,66 @@ Views.Dashboard = {
     `;
 
     /* ----------------------------------------------------------
-       2. SECTION ALERTES INTELLIGENTES
+       1B. SECTION RENTABILITÉ GLOBALE
        ---------------------------------------------------------- */
+
+    function profitabilityStatus(profitPercent) {
+      if (profitPercent >= settings.targetMarginPercent) return { status: '✓ Très rentable', cls: 'kpi-success' };
+      if (profitPercent >= settings.marginAlertThreshold) return { status: '⚠ Acceptable', cls: 'kpi-warning' };
+      if (profitPercent >= 0) return { status: '⚠ À surveiller', cls: 'kpi-warning' };
+      return { status: '✗ Déficitaire', cls: 'kpi-alert' };
+    }
+
+    /* Calcul rentabilité À DATE */
+    const rentabiliteADate = kpis.totalRevenue > 0
+      ? round2((kpis.netResult / kpis.totalRevenue) * 100)
+      : 0;
+    const statusADate = profitabilityStatus(rentabiliteADate);
+
+    /* Calcul rentabilité PRÉVISIONNELLE */
+    const revenuePrevisionnelle = kpis.totalRevenue + kpis.forecastRevenue;
+    const forecastTotalCosts = kpis.totalCosts + (kpis.forecastRevenue * (kpis.totalCosts / Math.max(kpis.totalRevenue, 1)));
+    const netResultForecast = revenuePrevisionnelle - forecastTotalCosts;
+    const rentabilitePrevisionnel = revenuePrevisionnelle > 0
+      ? round2((netResultForecast / revenuePrevisionnelle) * 100)
+      : 0;
+    const statusPrevisionnel = profitabilityStatus(rentabilitePrevisionnel);
+
+    function round2(n) {
+      return Math.round(n * 100) / 100;
+    }
+
+    const rentabilityHTML = `
+      <div class="card">
+        <div class="card-header"><h2>📊 Rentabilité globale</h2></div>
+        <div class="kpi-grid">
+          <div class="kpi-card ${statusADate.cls}">
+            <div class="kpi-label">Rentabilité à date</div>
+            <div class="kpi-value">${Engine.fmtPercent(rentabiliteADate)}</div>
+            <div class="kpi-detail">${statusADate.status}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">
+              CA: ${Engine.fmt(kpis.totalRevenue)} | Coûts: ${Engine.fmt(kpis.totalCosts)}
+            </div>
+          </div>
+          <div class="kpi-card ${statusPrevisionnel.cls}">
+            <div class="kpi-label">Rentabilité prévisionnelle</div>
+            <div class="kpi-value">${Engine.fmtPercent(rentabilitePrevisionnel)}</div>
+            <div class="kpi-detail">${statusPrevisionnel.status}</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">
+              CA prévu: ${Engine.fmt(revenuePrevisionnelle)} | Coûts est.: ${Engine.fmt(round2(forecastTotalCosts))}
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Break-even</div>
+            <div class="kpi-value">${Engine.fmtPercent(Math.max(0, 100 - rentabiliteADate))}</div>
+            <div class="kpi-detail">Marge de sécurité</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">
+              ${rentabiliteADate >= 100 ? 'Bien au-dessus du seuil' : (100 - rentabiliteADate) + '% de réduction possible'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
 
     function buildAlertsHTML() {
       if (alerts.length === 0) {
@@ -532,6 +590,9 @@ Views.Dashboard = {
 
       <!-- Indicateurs clés -->
       ${kpiCardsHTML}
+
+      <!-- Rentabilité globale -->
+      ${rentabilityHTML}
 
       <!-- Alertes intelligentes -->
       ${buildAlertsHTML()}

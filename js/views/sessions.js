@@ -302,11 +302,11 @@ Views.Sessions = (() => {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Libell\u00e9</th>
+                <th>Libellé</th>
                 <th>Client</th>
-                <th>Module</th>
-                <th>Op\u00e9rateur(s)</th>
-                <th>Lieu</th>
+                <th>Module(s)</th>
+                <th>Opérateur(s)</th>
+                <th>Prix HT</th>
                 <th>Statut</th>
                 <th></th>
               </tr>
@@ -315,11 +315,11 @@ Views.Sessions = (() => {
               ${filtered.map(s => `
                 <tr>
                   <td>${_formatDateFr(s.date)}${s.time ? '<br><small class="text-muted">' + _esc(s.time) + '</small>' : ''}</td>
-                  <td><strong>${_esc(s.label || '\u2014')}</strong></td>
+                  <td><strong>${_esc(s.label || '—')}</strong></td>
                   <td>${_clientName(s.clientIds)}</td>
-                  <td>${_moduleNames(s.moduleIds)}</td>
-                  <td>${_operatorNames(s.operatorIds)}</td>
-                  <td>${_locationName(s.locationId)}</td>
+                  <td><small>${_moduleNames(s.moduleIds)}</small></td>
+                  <td><small>${_operatorNames(s.operatorIds)}</small></td>
+                  <td class="num">${Engine.fmt(s.price || 0)}${s.encaissement ? ' <span style="color:var(--color-success);font-weight:600;">✓</span>' : ' <span style="color:var(--text-muted);">○</span>'}</td>
                   <td><span class="tag ${_statusTag(s.status)}">${_statusLabel(s.status)}</span></td>
                   <td class="actions-cell">
                     <button class="btn btn-sm btn-edit-sess" data-id="${s.id}" title="Modifier">&#9998;</button>
@@ -361,23 +361,33 @@ Views.Sessions = (() => {
     } else {
       html += daySessions.map(s => {
         const statusOpt = STATUS_OPTIONS.find(so => so.value === s.status) || STATUS_OPTIONS[0];
+        const client = DB.clients.getById((s.clientIds && s.clientIds[0]) || s.clientId);
         return `
           <div class="planning-card" style="border-left:4px solid ${_statusColor(s.status)};">
             <div class="flex-between" style="align-items:flex-start;">
-              <div>
-                <strong>${s.time ? _esc(s.time) + ' \u2014 ' : ''}${_esc(s.label || 'Session')}</strong>
-                <div class="text-muted" style="font-size:0.82rem;margin-top:4px;">
-                  Client : <strong>${_clientName(s.clientIds)}</strong>
-                  &nbsp;&middot;&nbsp; Module : <strong>${_moduleNames(s.moduleIds)}</strong>
-                  &nbsp;&middot;&nbsp; Op\u00e9rateur : <strong>${_operatorNames(s.operatorIds)}</strong>
-                  ${s.locationId ? '&nbsp;&middot;&nbsp; Lieu : ' + _esc(_locationName(s.locationId)) : ''}
+              <div style="flex:1;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                  <strong>${s.time ? _esc(s.time) + ' — ' : ''}${_esc(s.label || 'Session')}</strong>
+                  <span class="tag ${statusOpt.tag}">${statusOpt.label}</span>
                 </div>
-                ${s.notes ? '<div class="text-muted" style="font-size:0.78rem;margin-top:4px;font-style:italic;">' + _esc(s.notes) + '</div>' : ''}
+                <div class="text-muted" style="font-size:0.82rem;margin-bottom:6px;">
+                  <div><strong>Client :</strong> ${_esc(client ? client.name : '—')}</div>
+                  <div><strong>Module(s) :</strong> ${_moduleNames(s.moduleIds)}</div>
+                  <div><strong>Opérateur(s) :</strong> ${_operatorNames(s.operatorIds)}</div>
+                  ${s.locationId ? `<div><strong>Lieu :</strong> ${_esc(_locationName(s.locationId))}</div>` : ''}
+                  ${client && client.contactName ? `<div><strong>Contact :</strong> ${_esc(client.contactName)}${client.phone ? ' • ' + _esc(client.phone) : ''}</div>` : ''}
+                </div>
+                ${s.price > 0 ? `
+                  <div style="font-size:0.85rem;margin-top:6px;">
+                    <strong style="color:var(--text-heading);">Prix :</strong> ${Engine.fmt(s.price)}
+                    ${s.encaissement ? ' <span style="color:var(--color-success);font-weight:600;">✓ Encaissée</span>' : ' <span style="color:var(--text-muted);">En attente</span>'}
+                  </div>
+                ` : ''}
+                ${s.notes ? '<div class="text-muted" style="font-size:0.78rem;margin-top:6px;font-style:italic;">📝 ' + _esc(s.notes) + '</div>' : ''}
               </div>
               <div class="flex gap-8" style="align-items:center;flex-shrink:0;">
-                <span class="tag ${statusOpt.tag}">${statusOpt.label}</span>
-                <button class="btn btn-sm btn-edit-sess" data-id="${s.id}" title="Modifier">&#9998;</button>
-                <button class="btn btn-sm btn-del-sess" data-id="${s.id}" title="Supprimer">&#128465;</button>
+                <button class="btn btn-sm btn-edit-sess" data-id="${s.id}" title="Modifier">✎</button>
+                <button class="btn btn-sm btn-del-sess" data-id="${s.id}" title="Supprimer">🗑</button>
               </div>
             </div>
           </div>
@@ -409,7 +419,7 @@ Views.Sessions = (() => {
     });
   }
 
-  /* === FORMULAIRE SIMPLIFI\u00c9 (cr\u00e9ation / modification) === */
+  /* === FORMULAIRE DE PLANIFICATION (création / modification) === */
   function _openFormModal(session, presetDate) {
     const isEdit = !!session;
     const s = session || {};
@@ -421,19 +431,32 @@ Views.Sessions = (() => {
     const offers    = DB.offers.getAll().filter(o => o.active !== false);
 
     const dateVal = s.date || presetDate || _isoDate(new Date());
+    const selectedClientId = (s.clientIds && s.clientIds[0]) || s.clientId;
+    const selectedClient = selectedClientId ? DB.clients.getById(selectedClientId) : null;
+    const clientLocations = selectedClientId ? locations.filter(l => l.clientId === selectedClientId) : [];
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
 
     overlay.innerHTML = `
-      <div class="modal" style="max-width:600px;">
+      <div class="modal" style="max-width:700px;">
         <div class="modal-header">
           <h2>${isEdit ? 'Modifier la session' : 'Planifier une session'}</h2>
           <button class="btn btn-sm btn-ghost" id="fm-close">&times;</button>
         </div>
         <div class="modal-body">
 
-          <!-- Date / Heure -->
+          <!-- Infos client (si sélectionné) -->
+          ${selectedClient ? `
+            <div style="background:var(--bg-tertiary);border-radius:8px;padding:12px;margin-bottom:16px;border-left:3px solid var(--color-info);">
+              <div style="font-weight:600;color:var(--text-heading);margin-bottom:4px;">${_esc(selectedClient.name)}</div>
+              ${selectedClient.contactName ? `<div style="font-size:0.85rem;color:var(--text-secondary);">Contact : <strong>${_esc(selectedClient.contactName)}</strong></div>` : ''}
+              ${selectedClient.contactEmail ? `<div style="font-size:0.85rem;color:var(--text-secondary);">Email : <strong>${_esc(selectedClient.contactEmail)}</strong></div>` : ''}
+              ${selectedClient.phone ? `<div style="font-size:0.85rem;color:var(--text-secondary);">Tél : <strong>${_esc(selectedClient.phone)}</strong></div>` : ''}
+            </div>
+          ` : ''}
+
+          <!-- Date / Heure / Statut -->
           <div class="form-row">
             <div class="form-group">
               <label for="fm-date">Date *</label>
@@ -454,9 +477,9 @@ Views.Sessions = (() => {
             </div>
           </div>
 
-          <!-- Libell\u00e9 -->
+          <!-- Libellé -->
           <div class="form-group">
-            <label for="fm-label">Libell\u00e9</label>
+            <label for="fm-label">Libellé</label>
             <input type="text" class="form-control" id="fm-label" value="${_escAttr(s.label || '')}" placeholder="Ex : Tir tactique Gendarmerie" />
           </div>
 
@@ -464,69 +487,75 @@ Views.Sessions = (() => {
           <div class="form-group">
             <label for="fm-client">Client *</label>
             <select class="form-control" id="fm-client" required>
-              <option value="">\u2014 S\u00e9lectionner un client \u2014</option>
+              <option value="">— Sélectionner un client —</option>
               ${clients.map(c => `<option value="${c.id}" ${(s.clientIds || []).includes(c.id) || s.clientId === c.id ? 'selected' : ''}>${_esc(c.name || c.id)}</option>`).join('')}
             </select>
           </div>
 
-          <!-- Module -->
+          <!-- Modules (multi-select) -->
           <div class="form-group">
-            <label for="fm-module">Module *</label>
-            <select class="form-control" id="fm-module" required>
-              <option value="">\u2014 S\u00e9lectionner un module \u2014</option>
-              ${modules.map(m => `<option value="${m.id}" ${(s.moduleIds || []).includes(m.id) ? 'selected' : ''}>${_esc(m.name || m.id)}${m.category ? ' (' + _esc(m.category) + ')' : ''}</option>`).join('')}
-            </select>
+            <label>Modules * <span style="font-size:0.75rem;color:var(--text-muted);">(sélectionnez un ou plusieurs)</span></label>
+            <div id="fm-modules" style="max-height:140px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;background:var(--bg-input);">
+              ${modules.map(m => `
+                <label class="form-check" style="margin-bottom:6px;">
+                  <input type="checkbox" name="modules" value="${m.id}" ${(s.moduleIds || []).includes(m.id) ? 'checked' : ''} />
+                  <span>${_esc(m.name)}${m.category ? ' (' + _esc(m.category) + ')' : ''}</span>
+                </label>
+              `).join('')}
+            </div>
+            <div id="modules-error" style="color:#d32f2f;font-size:0.75rem;margin-top:4px;display:none;">Au moins un module requis</div>
           </div>
 
-          <!-- Op\u00e9rateur -->
+          <!-- Opérateurs (multi-select) -->
           <div class="form-group">
-            <label for="fm-operator">Op\u00e9rateur *</label>
-            <select class="form-control" id="fm-operator" required>
-              <option value="">\u2014 S\u00e9lectionner un op\u00e9rateur \u2014</option>
+            <label>Opérateurs * <span style="font-size:0.75rem;color:var(--text-muted);">(sélectionnez un ou plusieurs)</span></label>
+            <div id="fm-operators" style="max-height:140px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;background:var(--bg-input);">
               ${operators.map(o => {
                 const name = ((o.firstName || '') + ' ' + (o.lastName || '')).trim();
-                const sel = (s.operatorIds || []).includes(o.id) ? 'selected' : '';
-                return `<option value="${o.id}" ${sel}>${_esc(name)} (${Engine.statusLabel(o.status)})</option>`;
-              }).join('')}
-            </select>
-          </div>
-
-          <!-- Op\u00e9rateurs suppl\u00e9mentaires -->
-          <div class="form-group">
-            <label>Op\u00e9rateurs suppl\u00e9mentaires</label>
-            <div id="fm-extra-ops" style="max-height:120px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:8px;">
-              ${operators.map(o => {
-                const name = ((o.firstName || '') + ' ' + (o.lastName || '')).trim();
-                const isMain = (s.operatorIds || []).indexOf(o.id) === 0;
-                const checked = !isMain && (s.operatorIds || []).includes(o.id);
-                return `<label class="form-check" style="margin-bottom:4px;"><input type="checkbox" name="extra-ops" value="${o.id}" ${checked ? 'checked' : ''} /><span>${_esc(name)}</span></label>`;
+                return `
+                  <label class="form-check" style="margin-bottom:6px;">
+                    <input type="checkbox" name="operators" value="${o.id}" ${(s.operatorIds || []).includes(o.id) ? 'checked' : ''} />
+                    <span>${_esc(name)} <span style="color:var(--text-muted);font-size:0.8rem;">(${Engine.statusLabel(o.status)})</span></span>
+                  </label>
+                `;
               }).join('')}
             </div>
-            <span class="form-help">Cochez si plusieurs op\u00e9rateurs sont n\u00e9cessaires.</span>
+            <div id="operators-error" style="color:#d32f2f;font-size:0.75rem;margin-top:4px;display:none;">Au moins un opérateur requis</div>
           </div>
 
-          <!-- Lieu -->
+          <!-- Lieux (selon le client sélectionné) -->
           <div class="form-group">
-            <label for="fm-location">Lieu</label>
-            <select class="form-control" id="fm-location">
-              <option value="">\u2014 Aucun lieu \u2014</option>
-              ${locations.map(l => `<option value="${l.id}" ${s.locationId === l.id ? 'selected' : ''}>${_esc(l.name || l.id)}${l.city ? ' (' + _esc(l.city) + ')' : ''}</option>`).join('')}
+            <label for="fm-location">Lieu(x) d'intervention <span style="font-size:0.75rem;color:var(--text-muted);">${clientLocations.length > 0 ? '(du client)' : '(aucun lieu pour ce client)'}</span></label>
+            <select class="form-control" id="fm-location" ${clientLocations.length === 0 ? 'disabled' : ''}>
+              <option value="">— Aucun lieu —</option>
+              ${clientLocations.map(l => `<option value="${l.id}" ${s.locationId === l.id ? 'selected' : ''}>${_esc(l.name)}${l.city ? ' (' + _esc(l.city) + ')' : ''}</option>`).join('')}
+              ${clientLocations.length === 0 ? `<option disabled>Ajouter des lieux dans le profil client</option>` : ''}
             </select>
           </div>
 
-          <!-- Offre li\u00e9e -->
+          <!-- Offre liée -->
           <div class="form-group">
-            <label for="fm-offer">Offre li\u00e9e</label>
+            <label for="fm-offer">Offre liée</label>
             <select class="form-control" id="fm-offer">
-              <option value="">\u2014 Aucune \u2014</option>
-              ${offers.map(o => `<option value="${o.id}" ${s.offerId === o.id ? 'selected' : ''}>${_esc(o.label || o.name || o.id)}</option>`).join('')}
+              <option value="">— Aucune —</option>
+              ${offers.map(o => `<option value="${o.id}" data-price="${o.price || 0}" ${s.offerId === o.id ? 'selected' : ''}>${_esc(o.label || o.name || o.id)}</option>`).join('')}
             </select>
+            <div id="offer-info" style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;"></div>
           </div>
 
           <!-- Prix -->
-          <div class="form-group">
-            <label for="fm-price">Prix factur\u00e9 HT (\u20ac)</label>
-            <input type="number" class="form-control" id="fm-price" value="${s.price || ''}" min="0" step="any" placeholder="0" />
+          <div class="form-row">
+            <div class="form-group">
+              <label for="fm-price">Prix facturé HT (€) *</label>
+              <input type="number" class="form-control" id="fm-price" value="${s.price || ''}" min="0" step="any" placeholder="0" required />
+            </div>
+            <div class="form-group">
+              <label for="fm-encaissement">
+                <input type="checkbox" id="fm-encaissement" ${s.encaissement ? 'checked' : ''} />
+                <span style="margin-left:6px;">Encaissée</span>
+              </label>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">Cochez si la facture est payée</div>
+            </div>
           </div>
 
           <!-- Notes -->
@@ -551,7 +580,7 @@ Views.Sessions = (() => {
     overlay.querySelector('#fm-cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
-    /* Validation date (avertissement si date passée) */
+    /* Validation date */
     const dateInput = overlay.querySelector('#fm-date');
     const dateWarning = overlay.querySelector('#date-warning');
     const checkPastDate = () => {
@@ -570,25 +599,77 @@ Views.Sessions = (() => {
       }
     };
     dateInput.addEventListener('change', checkPastDate);
-    checkPastDate(); // Vérifier au chargement initial
+    checkPastDate();
+
+    /* Mise à jour des lieux selon le client sélectionné */
+    const clientSelect = overlay.querySelector('#fm-client');
+    const locationSelect = overlay.querySelector('#fm-location');
+    const updateLocations = () => {
+      const clientId = clientSelect.value;
+      const newLocations = clientId ? locations.filter(l => l.clientId === clientId) : [];
+      locationSelect.innerHTML = `<option value="">— Aucun lieu —</option>`;
+      if (newLocations.length > 0) {
+        locationSelect.disabled = false;
+        newLocations.forEach(l => {
+          const opt = document.createElement('option');
+          opt.value = l.id;
+          opt.textContent = _esc(l.name) + (l.city ? ' (' + _esc(l.city) + ')' : '');
+          locationSelect.appendChild(opt);
+        });
+      } else {
+        locationSelect.disabled = true;
+        const opt = document.createElement('option');
+        opt.disabled = true;
+        opt.textContent = 'Ajouter des lieux dans le profil client';
+        locationSelect.appendChild(opt);
+      }
+    };
+    clientSelect.addEventListener('change', updateLocations);
+
+    /* Mise à jour du prix selon l'offre sélectionnée */
+    const offerSelect = overlay.querySelector('#fm-offer');
+    const priceInput = overlay.querySelector('#fm-price');
+    const offerInfo = overlay.querySelector('#offer-info');
+    const updateOfferPrice = () => {
+      const selectedOpt = offerSelect.options[offerSelect.selectedIndex];
+      const offerPrice = parseFloat(selectedOpt.dataset.price || 0);
+      if (offerPrice > 0) {
+        priceInput.value = offerPrice;
+        offerInfo.textContent = 'Prix pré-rempli depuis l\'offre : ' + Engine.fmt(offerPrice);
+      } else {
+        offerInfo.textContent = '';
+      }
+    };
+    offerSelect.addEventListener('change', updateOfferPrice);
 
     /* Sauvegarde */
     overlay.querySelector('#fm-save').addEventListener('click', () => {
       const date = overlay.querySelector('#fm-date').value;
       const clientId = overlay.querySelector('#fm-client').value;
-      const moduleId = overlay.querySelector('#fm-module').value;
-      const mainOpId = overlay.querySelector('#fm-operator').value;
+      const moduleCheckboxes = Array.from(overlay.querySelectorAll('input[name="modules"]:checked'));
+      const operatorCheckboxes = Array.from(overlay.querySelectorAll('input[name="operators"]:checked'));
+      const price = parseFloat(overlay.querySelector('#fm-price').value) || 0;
 
-      if (!date) { _highlight(overlay.querySelector('#fm-date')); return; }
-      if (!clientId) { _highlight(overlay.querySelector('#fm-client')); return; }
-      if (!moduleId) { _highlight(overlay.querySelector('#fm-module')); return; }
-      if (!mainOpId) { _highlight(overlay.querySelector('#fm-operator')); return; }
+      let isValid = true;
 
-      /* Collecter les op\u00e9rateurs suppl\u00e9mentaires */
-      const operatorIds = [mainOpId];
-      overlay.querySelectorAll('input[name="extra-ops"]:checked').forEach(cb => {
-        if (cb.value !== mainOpId) operatorIds.push(cb.value);
-      });
+      if (!date) { _highlight(overlay.querySelector('#fm-date')); isValid = false; }
+      if (!clientId) { _highlight(overlay.querySelector('#fm-client')); isValid = false; }
+
+      if (moduleCheckboxes.length === 0) {
+        overlay.querySelector('#modules-error').style.display = '';
+        isValid = false;
+      } else {
+        overlay.querySelector('#modules-error').style.display = 'none';
+      }
+
+      if (operatorCheckboxes.length === 0) {
+        overlay.querySelector('#operators-error').style.display = '';
+        isValid = false;
+      } else {
+        overlay.querySelector('#operators-error').style.display = 'none';
+      }
+
+      if (!isValid) return;
 
       const previousStatus = session ? session.status : null;
       const newStatus = overlay.querySelector('#fm-status').value;
@@ -599,21 +680,22 @@ Views.Sessions = (() => {
         label:       overlay.querySelector('#fm-label').value.trim(),
         status:      newStatus,
         clientIds:   [clientId],
-        moduleIds:   [moduleId],
-        operatorIds,
+        moduleIds:   moduleCheckboxes.map(cb => cb.value),
+        operatorIds: operatorCheckboxes.map(cb => cb.value),
         locationId:  overlay.querySelector('#fm-location').value || '',
         offerId:     overlay.querySelector('#fm-offer').value || '',
-        price:       parseFloat(overlay.querySelector('#fm-price').value) || 0,
+        price:       price,
+        encaissement: overlay.querySelector('#fm-encaissement').checked,
         notes:       overlay.querySelector('#fm-notes').value.trim(),
         variableCosts: isEdit ? (s.variableCosts || []) : []
       };
 
       if (isEdit) {
         DB.sessions.update(session.id, data);
-        Toast.show('Session mise \u00e0 jour.', 'success');
+        Toast.show('Session mise à jour.', 'success');
       } else {
         DB.sessions.create(data);
-        Toast.show('Session planifi\u00e9e.', 'success');
+        Toast.show('Session planifiée.', 'success');
       }
 
       /* Gestion abonnement */
@@ -622,7 +704,6 @@ Views.Sessions = (() => {
         const offer = DB.offers.getById(data.offerId);
         if (offer && offer.type === 'abonnement') {
           const consumed = (offer.sessionsConsumed || 0) + 1;
-          // Garde : ne pas dépasser le nombre de sessions de l'abonnement
           const finalConsumed = Math.min(consumed, offer.nbSessions || 0);
           DB.offers.update(offer.id, { sessionsConsumed: finalConsumed });
         }

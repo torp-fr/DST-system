@@ -211,6 +211,8 @@ const DB = (() => {
     estimatedAnnualSessions: 100,
     // Nombre de jours objectif annuels (pour seuil plancher)
     nbJoursObjectifAnnuel: 50,
+    // Nombre d'opérateurs estimés par session (pour calcul seuil plancher)
+    estimatedOperatorsPerSession: 1,
     // Coûts variables par défaut par session
     defaultSessionVariableCosts: [
       { label: 'Consommables', amount: 0 },

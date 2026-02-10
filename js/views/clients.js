@@ -358,7 +358,39 @@ Views.Clients = (() => {
 
   /* --- Onglet Informations --- */
   function _renderDetailInfo(client) {
-    return `
+    const profitability = Engine.computeClientProfitability(client.id);
+
+    function profitabilityCardClass(percent) {
+      if (percent >= 30) return 'kpi-success';
+      if (percent >= 15) return 'kpi-success';
+      if (percent >= 0) return 'kpi-warning';
+      return 'kpi-alert';
+    }
+
+    const profitabilityHTML = `
+      <div style="margin-bottom:20px;">
+        <h3 style="font-size:0.95rem;font-weight:600;color:var(--text-heading);margin-bottom:12px;">📊 Rentabilité</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+          <div class="kpi-card ${profitabilityCardClass(profitability.rentabilityPercent)}">
+            <div class="kpi-label">Rentabilité</div>
+            <div class="kpi-value">${Engine.fmtPercent(profitability.rentabilityPercent)}</div>
+            <div class="kpi-detail">${profitability.status}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Sessions complétées</div>
+            <div class="kpi-value">${profitability.completedSessions} / ${profitability.totalSessions}</div>
+            <div class="kpi-detail">CA: ${Engine.fmt(profitability.totalRevenue)}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Résultat net</div>
+            <div class="kpi-value ${profitability.netResult >= 0 ? 'text-green' : 'text-red'}">${Engine.fmt(profitability.netResult)}</div>
+            <div class="kpi-detail">Marge moy: ${profitability.avgMargin.toFixed(1)}€</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return profitabilityHTML + `
       <table class="data-table" style="font-size:0.85rem;">
         <tbody>
           <tr><td class="text-muted" style="width:160px;">Type</td><td><span class="tag ${_typeTagClass(client.type)}">${_escapeHtml(client.type || 'N/C')}</span></td></tr>
