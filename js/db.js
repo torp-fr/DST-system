@@ -99,12 +99,13 @@ const DB = (() => {
   }
 
   /* --- Entités métier --- */
-  const operators   = createCRUD('operators');
-  const modules     = createCRUD('modules');
-  const clients     = createCRUD('clients');
-  const offers      = createCRUD('offers');
-  const sessions    = createCRUD('sessions');
-  const locations   = createCRUD('locations');
+  const operators           = createCRUD('operators');
+  const modules             = createCRUD('modules');
+  const clients             = createCRUD('clients');
+  const offers              = createCRUD('offers');
+  const sessions            = createCRUD('sessions');
+  const locations           = createCRUD('locations');
+  const clientSubscriptions = createCRUD('clientSubscriptions');
 
   /* --- Paramètres économiques --- */
   const DEFAULT_SETTINGS = {
@@ -277,6 +278,7 @@ const DB = (() => {
         offers: offers.getAll(),
         sessions: sessions.getAll(),
         locations: locations.getAll(),
+        clientSubscriptions: clientSubscriptions.getAll(),
         settings: settings.get()
       }
     };
@@ -291,11 +293,12 @@ const DB = (() => {
     if (d.offers) setStore('offers', d.offers);
     if (d.sessions) setStore('sessions', d.sessions);
     if (d.locations) setStore('locations', d.locations);
+    if (d.clientSubscriptions) setStore('clientSubscriptions', d.clientSubscriptions);
     if (d.settings) settings.set(d.settings);
   }
 
   function clearAll() {
-    ['operators','modules','clients','offers','sessions','locations'].forEach(k => setStore(k, []));
+    ['operators','modules','clients','offers','sessions','locations','clientSubscriptions'].forEach(k => setStore(k, []));
     settings.reset();
   }
 
@@ -307,6 +310,7 @@ const DB = (() => {
     offers,
     sessions,
     locations,
+    clientSubscriptions,
     settings,
     exportAll,
     importAll,

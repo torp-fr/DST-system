@@ -167,6 +167,14 @@ Views.Clients = (() => {
       const isExpanded = _expandedClientId === client.id;
       const locationCount = DB.locations.filter(l => l.clientId === client.id).length;
 
+      // Profitabilité du client
+      const profitability = Engine.computeClientProfitability(client.id);
+      const profitabilityClass = profitability.rentabilityPercent >= 30 ? 'tag-green'
+        : profitability.rentabilityPercent >= 15 ? 'tag-yellow'
+        : profitability.rentabilityPercent >= 0 ? 'tag-orange'
+        : 'tag-red';
+      const profitabilityLabel = profitability.rentabilityPercent.toFixed(1) + '%';
+
       return `
         <tr class="client-row ${isExpanded ? 'active' : ''}" data-id="${client.id}" style="cursor:pointer;">
           <td>
@@ -182,6 +190,9 @@ Views.Clients = (() => {
           <td>${_escapeHtml(client.city || '—')}</td>
           <td class="num">${sessCount}</td>
           <td class="num">${locationCount}</td>
+          <td>
+            <span class="tag ${profitabilityClass}">${profitabilityLabel}</span>
+          </td>
           <td>
             ${client.active !== false
               ? '<span class="tag tag-green">Actif</span>'
@@ -206,6 +217,7 @@ Views.Clients = (() => {
               <th>Ville</th>
               <th>Sessions</th>
               <th>Lieux</th>
+              <th>Rentabilité</th>
               <th>Statut</th>
               <th class="text-right">Actions</th>
             </tr>
@@ -255,6 +267,7 @@ Views.Clients = (() => {
     );
 
     const clientLocations = DB.locations.filter(l => l.clientId === clientId);
+    const clientSubscriptions = DB.clientSubscriptions.filter(s => s.clientId === clientId);
 
     const stats = _computeClientStats(clientSessions);
 
@@ -262,6 +275,7 @@ Views.Clients = (() => {
       { key: 'info', label: 'Informations' },
       { key: 'sessions', label: 'Sessions (' + clientSessions.length + ')' },
       { key: 'offers', label: 'Offres (' + clientOffers.length + ')' },
+      { key: 'subscriptions', label: 'Abonnements (' + clientSubscriptions.length + ')' },
       { key: 'locations', label: 'Lieux (' + clientLocations.length + ')' }
     ];
 
@@ -305,7 +319,7 @@ Views.Clients = (() => {
 
         <!-- Contenu onglet -->
         <div id="detail-tab-content" style="margin-top:16px;">
-          ${_renderDetailTabContent(client, clientSessions, clientOffers, clientLocations, stats)}
+          ${_renderDetailTabContent(client, clientSessions, clientOffers, clientLocations, clientSubscriptions, stats)}
         </div>
       </div>
     `;
@@ -347,10 +361,11 @@ Views.Clients = (() => {
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function _renderDetailTabContent(client, sessions, offers, locations, stats) {
+  function _renderDetailTabContent(client, sessions, offers, locations, subscriptions, stats) {
     switch (_detailTab) {
       case 'sessions': return _renderDetailSessions(client, sessions);
       case 'offers': return _renderDetailOffers(client, offers);
+      case 'subscriptions': return _renderDetailSubscriptions(client, subscriptions);
       case 'locations': return _renderDetailLocations(client, locations);
       default: return _renderDetailInfo(client);
     }
@@ -490,7 +505,86 @@ Views.Clients = (() => {
     `;
   }
 
-  /* --- Onglet Lieux --- */
+  /* --- Onglet Abonnements clients --- */
+  function _renderDetailSubscriptions(client, subscriptions) {
+    let html = `
+      <div class="flex-between mb-16">
+        <span class="text-muted">${subscriptions.length} abonnement(s) personnalisé(s)</span>
+        <button class="btn btn-sm btn-primary" id="btn-add-subscription">+ Nouvel abonnement</button>
+      </div>
+    `;
+
+    if (subscriptions.length === 0) {
+      html += '<div class="empty-state" style="padding:24px;"><p class="text-muted">Aucun abonnement personnalisé. Créez un abonnement pour parametrer une offre avec ce client.</p></div>';
+      return html;
+    }
+
+    html += `
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Offre</th>
+              <th>Participants</th>
+              <th>Rythme</th>
+              <th class="text-right">Prix HT/an</th>
+              <th class="text-right">Jours/an</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${subscriptions.map(sub => {
+              const offer = DB.offers.getById(sub.offerId);
+              const offerLabel = offer ? (offer.label || '(sans nom)') : '(offre supprimée)';
+              const rhythmLabels = { 'mensuel': 'Mensuel', 'bimensuel': 'Bimensuel', 'hebdomadaire': 'Hebdomadaire', 'trimestriel': 'Trimestriel' };
+              const rhythmLabel = rhythmLabels[sub.rythme] || sub.rythme || '—';
+
+              return `
+                <tr>
+                  <td><strong>${_escapeHtml(offerLabel)}</strong></td>
+                  <td class="num">${sub.participants || 1}</td>
+                  <td><small>${_escapeHtml(rhythmLabel)}</small></td>
+                  <td class="num">${Engine.fmt(sub.prixPersonnalise || 0)}</td>
+                  <td class="num">${sub.volumeJours || '—'}</td>
+                  <td class="actions-cell">
+                    <button class="btn btn-sm btn-edit-sub" data-id="${sub.id}" data-client="${client.id}" title="Modifier">&#9998;</button>
+                    <button class="btn btn-sm btn-delete-sub" data-id="${sub.id}" title="Supprimer">&#128465;</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    setTimeout(() => {
+      const btnAdd = _container.querySelector('#btn-add-subscription');
+      if (btnAdd) {
+        btnAdd.addEventListener('click', () => _openSubscriptionModal(null, client.id));
+      }
+      _container.querySelectorAll('.btn-edit-sub').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sub = DB.clientSubscriptions.getById(btn.dataset.id);
+          if (sub) _openSubscriptionModal(sub, client.id);
+        });
+      });
+      _container.querySelectorAll('.btn-delete-sub').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sub = DB.clientSubscriptions.getById(btn.dataset.id);
+          if (sub && confirm('Supprimer cet abonnement ?')) {
+            DB.clientSubscriptions.delete(sub.id);
+            _renderDetail(_expandedClientId);
+            Toast.show('Abonnement supprimé.', 'warning');
+          }
+        });
+      });
+    }, 0);
+
+    return html;
+  }
+
+  /* --- Lieux --- */
   function _renderDetailLocations(client, locations) {
     let html = `
       <div class="flex-between mb-16">
@@ -565,6 +659,7 @@ Views.Clients = (() => {
     const settings = DB.settings.get();
     const clientTypes = settings.clientTypes || [];
     const c = client || {};
+    const allSubscriptions = DB.clientSubscriptions.getAll();
 
     const isCustomType = c.type && !clientTypes.includes(c.type);
 
@@ -703,6 +798,22 @@ Views.Clients = (() => {
             </div>
           </div>
 
+          <!-- Abonnement/Plan -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="client-subscription">Abonnement / Plan principal</label>
+              <select class="form-control" id="client-subscription">
+                <option value="">-- Aucun abonnement --</option>
+                ${allSubscriptions.map(sub => {
+                  const offer = DB.offers.getById(sub.offerId);
+                  const offerLabel = offer ? (offer.label || '(sans nom)') : '(offre supprimée)';
+                  return `<option value="${sub.id}" ${c.primarySubscriptionId === sub.id ? 'selected' : ''}>${_escapeHtml(offerLabel)} — ${sub.participants} pers. — ${sub.rythme}</option>`;
+                }).join('')}
+              </select>
+              <span class="form-help text-muted">Sélectionnez l'abonnement personnalisé auquel ce client a souscrit</span>
+            </div>
+          </div>
+
           <!-- Notes -->
           <div class="form-group">
             <label for="client-notes">Notes internes</label>
@@ -774,6 +885,7 @@ Views.Clients = (() => {
         siret: overlay.querySelector('#client-siret').value.trim(),
         paymentTerms: overlay.querySelector('#client-payment-terms').value,
         priority: overlay.querySelector('#client-priority').value,
+        primarySubscriptionId: overlay.querySelector('#client-subscription').value || null,
         notes: overlay.querySelector('#client-notes').value.trim(),
         active: overlay.querySelector('#client-active').checked
       };
@@ -952,6 +1064,144 @@ Views.Clients = (() => {
     });
 
     overlay.querySelector('#loc-name').focus();
+  }
+
+  /* --- Modal Abonnement Client --- */
+  function _openSubscriptionModal(subscription, clientId) {
+    const isEdit = !!subscription;
+    const s = subscription || {};
+    const allOffers = DB.offers.getAll().filter(o => o.active !== false);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'subscription-modal-overlay';
+
+    const rhythms = [
+      { value: 'mensuel', label: 'Mensuel (12 sessions/an)' },
+      { value: 'bimensuel', label: 'Bimensuel (6 sessions/an)' },
+      { value: 'hebdomadaire', label: 'Hebdomadaire (52 sessions/an)' },
+      { value: 'trimestriel', label: 'Trimestriel (4 sessions/an)' }
+    ];
+
+    function calculateVolume() {
+      const rhythmVal = overlay.querySelector('#sub-rythme').value;
+      const volumeMap = { 'mensuel': 12, 'bimensuel': 6, 'hebdomadaire': 52, 'trimestriel': 4 };
+      const sessions = volumeMap[rhythmVal] || 0;
+      return sessions;
+    }
+
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h2>${isEdit ? 'Modifier l\'abonnement' : 'Nouvel abonnement personnalis\u00e9'}</h2>
+          <button class="btn btn-sm btn-ghost" id="btn-sub-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sub-offer">Offre *</label>
+              <select class="form-control" id="sub-offer" required>
+                <option value="">-- S\u00e9lectionner une offre --</option>
+                ${allOffers.map(o => `
+                  <option value="${o.id}" ${s.offerId === o.id ? 'selected' : ''}>${_escapeHtml(o.label || '(sans nom)')}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="sub-participants">Nombre de participants</label>
+              <input type="number" class="form-control" id="sub-participants" min="1" step="1"
+                     value="${s.participants || 1}" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sub-rythme">Rythme de formation *</label>
+              <select class="form-control" id="sub-rythme" required>
+                ${rhythms.map(r => `
+                  <option value="${r.value}" ${s.rythme === r.value ? 'selected' : ''}>${r.label}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="sub-volume">Sessions/an (calcul\u00e9)</label>
+              <input type="number" class="form-control" id="sub-volume" disabled
+                     value="${calculateVolume()}" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="sub-prix">Prix HT/an personnalis\u00e9 (\u20ac) *</label>
+            <input type="number" class="form-control" id="sub-prix" min="0" step="any"
+                   value="${s.prixPersonnalise || ''}" placeholder="0" required />
+            <span class="form-help text-muted">Laissez vide pour utiliser le prix de l'offre</span>
+          </div>
+
+          <div class="form-group">
+            <label for="sub-notes">Notes / Conditions particuli\u00e8res</label>
+            <textarea class="form-control" id="sub-notes" rows="3"
+                      placeholder="Ex : Formation avanc\u00e9e, r\u00e9ductions volume...">${_escapeHtml(s.notes || '')}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="btn-sub-cancel">Annuler</button>
+          <button class="btn btn-primary" id="btn-sub-save">${isEdit ? 'Enregistrer' : 'Cr\u00e9er'}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const rythmeSelect = overlay.querySelector('#sub-rythme');
+    const volumeInput = overlay.querySelector('#sub-volume');
+    rythmeSelect.addEventListener('change', () => {
+      volumeInput.value = calculateVolume();
+    });
+
+    const closeModal = () => overlay.remove();
+    overlay.querySelector('#btn-sub-close').addEventListener('click', closeModal);
+    overlay.querySelector('#btn-sub-cancel').addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+    overlay.querySelector('#btn-sub-save').addEventListener('click', () => {
+      const offerId = overlay.querySelector('#sub-offer').value.trim();
+      if (!offerId) {
+        alert('V\u00e9uill\u00e9z s\u00e9lectionner une offre.');
+        overlay.querySelector('#sub-offer').focus();
+        return;
+      }
+
+      const prix = parseFloat(overlay.querySelector('#sub-prix').value);
+      if (isNaN(prix) || prix <= 0) {
+        alert('Le prix doit \u00eatre un nombre positif.');
+        overlay.querySelector('#sub-prix').focus();
+        return;
+      }
+
+      const volumeJours = calculateVolume();
+      const data = {
+        clientId: clientId,
+        offerId: offerId,
+        participants: parseInt(overlay.querySelector('#sub-participants').value, 10) || 1,
+        rythme: overlay.querySelector('#sub-rythme').value,
+        prixPersonnalise: prix,
+        volumeJours: volumeJours,
+        notes: overlay.querySelector('#sub-notes').value.trim()
+      };
+
+      if (isEdit) {
+        DB.clientSubscriptions.update(subscription.id, data);
+        Toast.show('Abonnement mis \u00e0 jour.', 'success');
+      } else {
+        DB.clientSubscriptions.create(data);
+        Toast.show('Abonnement cr\u00e9\u00e9.', 'success');
+      }
+
+      closeModal();
+      _renderDetail(clientId);
+    });
+
+    overlay.querySelector('#sub-offer').focus();
   }
 
   /* -----------------------------------------------------------

@@ -512,6 +512,71 @@ Views.Dashboard = {
     }
 
     /* ----------------------------------------------------------
+       5B. TABLEAU ABONNEMENTS CLIENTS
+       ---------------------------------------------------------- */
+
+    function buildClientSubscriptionsHTML() {
+      const subscriptions = DB.clientSubscriptions.getAll();
+      if (subscriptions.length === 0) {
+        return `
+          <div class="card">
+            <div class="card-header"><h2>Suivi des abonnements personnalisés</h2></div>
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <p>Aucun abonnement client personnalisé pour le moment.</p>
+            </div>
+          </div>
+        `;
+      }
+
+      let rows = subscriptions.map(sub => {
+        const client = DB.clients.getById(sub.clientId);
+        const offer = DB.offers.getById(sub.offerId);
+        const clientName = client ? (client.name || '(sans nom)') : '(client supprimé)';
+        const offerName = offer ? (offer.label || '(sans nom)') : '(offre supprimée)';
+        const rhythms = { 'mensuel': 'Mensuel', 'bimensuel': 'Bimensuel', 'hebdomadaire': 'Hebdo.', 'trimestriel': 'Trim.' };
+        const rhythm = rhythms[sub.rythme] || sub.rythme || '—';
+
+        return `
+          <tr>
+            <td><strong>${escapeHTML(clientName)}</strong></td>
+            <td>${escapeHTML(offerName)}</td>
+            <td class="num">${sub.participants || 1}</td>
+            <td><small>${rhythm}</small></td>
+            <td class="num">${Engine.fmt(sub.prixPersonnalise || 0)}</td>
+            <td class="num">${sub.volumeJours || '—'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      return `
+        <div class="card">
+          <div class="card-header">
+            <h2>Suivi des abonnements personnalisés</h2>
+            <span class="text-muted" style="font-size:0.82rem;">${subscriptions.length} abonnement(s)</span>
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Offre</th>
+                  <th>Participants</th>
+                  <th>Rythme</th>
+                  <th class="text-right">Prix HT/an</th>
+                  <th class="text-right">Sessions/an</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    /* ----------------------------------------------------------
        6. UTILITAIRE — Échappement HTML
        ---------------------------------------------------------- */
 
@@ -537,46 +602,6 @@ Views.Dashboard = {
        8. ACTIONS RAPIDES — Raccourcis de navigation
        ---------------------------------------------------------- */
 
-    function buildQuickActionsHTML() {
-      return `
-        <div class="card quick-actions-card">
-          <div class="card-header">
-            <h2>Actions rapides</h2>
-          </div>
-          <div class="quick-actions-grid">
-            <button class="quick-action-btn" data-action="wizard">
-              <span class="qa-icon">&#9654;</span>
-              <div>
-                <strong>Parcours guidé</strong>
-                <small>Client → Offre → Session → Suivi</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-client">
-              <span class="qa-icon">&#128100;</span>
-              <div>
-                <strong>Nouveau client</strong>
-                <small>Ajouter un client B2B/B2C</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-session">
-              <span class="qa-icon">&#128197;</span>
-              <div>
-                <strong>Nouvelle session</strong>
-                <small>Planifier une formation</small>
-              </div>
-            </button>
-            <button class="quick-action-btn" data-action="new-operator">
-              <span class="qa-icon">&#128736;</span>
-              <div>
-                <strong>Nouvel opérateur</strong>
-                <small>Ajouter au vivier RH</small>
-              </div>
-            </button>
-          </div>
-        </div>
-      `;
-    }
-
     container.innerHTML = `
       <div class="page-header">
         <div>
@@ -584,9 +609,6 @@ Views.Dashboard = {
           <span class="text-muted" style="font-size:0.82rem;">${escapeHTML(today)} — Poste de commandement stratégique</span>
         </div>
       </div>
-
-      <!-- Actions rapides -->
-      ${buildQuickActionsHTML()}
 
       <!-- Indicateurs clés -->
       ${kpiCardsHTML}
@@ -596,6 +618,9 @@ Views.Dashboard = {
 
       <!-- Alertes intelligentes -->
       ${buildAlertsHTML()}
+
+      <!-- Tableau suivi abonnements clients -->
+      ${buildClientSubscriptionsHTML()}
 
       <!-- Prochaines sessions + Synthèse économique -->
       <div class="grid-2">
@@ -609,23 +634,5 @@ Views.Dashboard = {
       </div>
     `;
 
-    /* ----------------------------------------------------------
-       9. ÉVÉNEMENTS — Actions rapides
-       ---------------------------------------------------------- */
-
-    container.querySelectorAll('.quick-action-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var action = btn.dataset.action;
-        if (action === 'wizard') {
-          if (typeof window.DST_Wizard === 'function') window.DST_Wizard();
-        } else if (action === 'new-client') {
-          App.navigate('clients');
-        } else if (action === 'new-session') {
-          App.navigate('sessions');
-        } else if (action === 'new-operator') {
-          App.navigate('operators');
-        }
-      });
-    });
   }
 };
