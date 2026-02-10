@@ -659,6 +659,7 @@ Views.Clients = (() => {
     const settings = DB.settings.get();
     const clientTypes = settings.clientTypes || [];
     const c = client || {};
+    const allSubscriptions = DB.clientSubscriptions.getAll();
 
     const isCustomType = c.type && !clientTypes.includes(c.type);
 
@@ -797,6 +798,22 @@ Views.Clients = (() => {
             </div>
           </div>
 
+          <!-- Abonnement/Plan -->
+          <div class="form-row">
+            <div class="form-group">
+              <label for="client-subscription">Abonnement / Plan principal</label>
+              <select class="form-control" id="client-subscription">
+                <option value="">-- Aucun abonnement --</option>
+                ${allSubscriptions.map(sub => {
+                  const offer = DB.offers.getById(sub.offerId);
+                  const offerLabel = offer ? (offer.label || '(sans nom)') : '(offre supprimée)';
+                  return `<option value="${sub.id}" ${c.primarySubscriptionId === sub.id ? 'selected' : ''}>${_escapeHtml(offerLabel)} — ${sub.participants} pers. — ${sub.rythme}</option>`;
+                }).join('')}
+              </select>
+              <span class="form-help text-muted">Sélectionnez l'abonnement personnalisé auquel ce client a souscrit</span>
+            </div>
+          </div>
+
           <!-- Notes -->
           <div class="form-group">
             <label for="client-notes">Notes internes</label>
@@ -868,6 +885,7 @@ Views.Clients = (() => {
         siret: overlay.querySelector('#client-siret').value.trim(),
         paymentTerms: overlay.querySelector('#client-payment-terms').value,
         priority: overlay.querySelector('#client-priority').value,
+        primarySubscriptionId: overlay.querySelector('#client-subscription').value || null,
         notes: overlay.querySelector('#client-notes').value.trim(),
         active: overlay.querySelector('#client-active').checked
       };

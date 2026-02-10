@@ -1331,6 +1331,87 @@ const Engine = (() => {
 
   /* === RENTABILITÉ PAR CLIENT === */
   function computeClientProfitability(clientId) {
+    const client = DB.clients.getById(clientId);
+    const settings = DB.settings.get();
+
+    // Si le client a un abonnement principal, calculer basé sur celui-ci
+    if (client && client.primarySubscriptionId) {
+      const subscription = DB.clientSubscriptions.getById(client.primarySubscriptionId);
+      if (subscription) {
+        const offer = DB.offers.getById(subscription.offerId);
+
+        const result = {
+          totalSessions: subscription.volumeJours || 0,
+          completedSessions: 0,
+          totalRevenue: subscription.prixPersonnalise || 0,
+          totalCosts: 0,
+          netResult: 0,
+          rentabilityPercent: 0,
+          avgMargin: 0,
+          status: 'Abonnement'
+        };
+
+        // Estimer les coûts basés sur les modules de l'offre
+        let costPerSession = 0;
+        if (offer && offer.moduleIds && offer.moduleIds.length > 0) {
+          offer.moduleIds.forEach(modId => {
+            const mod = DB.modules.getById(modId);
+            if (mod) costPerSession += (mod.fixedCost || 0) + (mod.variableCost || 0);
+          });
+        }
+
+        // Coût des opérateurs (estimation avec moyenne du pool)
+        const allOperators = DB.operators.getAll();
+        let avgOperatorCost = 0;
+        if (allOperators.length > 0) {
+          let totalOpCost = 0;
+          allOperators.forEach(op => totalOpCost += getOperatorDailyCost(op, settings));
+          avgOperatorCost = round2(totalOpCost / allOperators.length);
+        }
+        const estOperatorsPerSession = settings.estimatedOperatorsPerSession || 1;
+        costPerSession += avgOperatorCost * estOperatorsPerSession;
+
+        // Ajouter coûts variables par défaut
+        const defaultVariableCosts = (settings.defaultSessionVariableCosts || []).reduce((sum, vc) => sum + (vc.amount || 0), 0);
+        costPerSession += defaultVariableCosts;
+
+        // Coûts fixes et amortissement
+        const totalFixed = settings.fixedCosts.reduce((sum, c) => sum + (c.amount || 0), 0);
+        const estSessions = Math.max(settings.estimatedAnnualSessions, 1);
+        const fixedShare = round2(totalFixed / estSessions);
+
+        const totalAmort = settings.equipmentAmortization.reduce((sum, a) => {
+          const years = Math.max(a.durationYears || 1, 1);
+          return sum + ((a.amount || 0) / years);
+        }, 0);
+        const amortShare = round2(totalAmort / estSessions);
+
+        // Total coûts = (coût session × volume) + (coûts fixes/amort)
+        const costPerSessionFull = round2(costPerSession + fixedShare + amortShare);
+        result.totalCosts = round2(costPerSessionFull * (subscription.volumeJours || 1));
+
+        result.netResult = round2(result.totalRevenue - result.totalCosts);
+        result.avgMargin = result.totalSessions > 0 ? round2(result.netResult / result.totalSessions) : 0;
+        result.rentabilityPercent = result.totalRevenue > 0
+          ? round2((result.netResult / result.totalRevenue) * 100)
+          : 0;
+
+        // Statut
+        if (result.rentabilityPercent >= 30) {
+          result.status = '✓ Très rentable';
+        } else if (result.rentabilityPercent >= 15) {
+          result.status = '✓ Rentable';
+        } else if (result.rentabilityPercent >= 0) {
+          result.status = '⚠ Acceptable';
+        } else {
+          result.status = '✗ Déficitaire';
+        }
+
+        return result;
+      }
+    }
+
+    // Sinon, calculer basé sur les sessions du client
     const sessions = DB.sessions.getAll().filter(s => {
       return (s.clientIds && s.clientIds.includes(clientId)) || s.clientId === clientId;
     });
@@ -1357,7 +1438,6 @@ const Engine = (() => {
       }
 
       if (s.price > 0 || s.price === 0) {
-        // Calculer le coût de la session
         const cost = computeSessionCost(s);
         result.totalRevenue += (s.price || 0);
         result.totalCosts += cost.totalCost;
@@ -1372,7 +1452,7 @@ const Engine = (() => {
       ? round2((result.netResult / result.totalRevenue) * 100)
       : 0;
 
-    // Déterminer le statut
+    // Statut
     if (result.completedSessions === 0) {
       result.status = 'En cours';
     } else if (result.rentabilityPercent >= 30) {
