@@ -373,3 +373,75 @@ strong{font-weight:600;}
 .solution-card--featured:hover{box-shadow:0 0 48px var(--amber-10),var(--shadow-card);}
 .formula-body{padding:24px;display:flex;flex-direction:column;flex:1;}
 .formula-body>p{font-size:0.88rem;color:var(--fg-muted);margin-bottom:18px;line-height:1.65;}
+
+/* ============================================================
+   31. THEME TOGGLE BUTTON
+   ============================================================ */
+.nav__theme{background:transparent;border:1px solid rgba(255,255,255,0.18);border-radius:4px;color:var(--fg-muted);font-family:inherit;padding:5px 7px;cursor:pointer;transition:border-color 0.15s,color 0.15s;display:flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0;}
+.nav__theme:hover{border-color:var(--amber);color:var(--amber);}
+[data-theme="light"] .nav__theme{border-color:rgba(0,0,0,0.14);}
+
+/* ============================================================
+   32. LIGHT MODE — [data-theme="light"]
+   ============================================================ */
+[data-theme="light"]{
+  --bg:hsl(220,20%,97%);
+  --bg-darker:hsl(220,15%,93%);
+  --card:#ffffff;
+  --muted:hsl(220,15%,94%);
+  --surface:hsl(220,15%,95%);
+  --fg:hsl(220,20%,12%);
+  --fg-muted:hsl(215,12%,40%);
+  --fg-subtle:hsl(215,10%,58%);
+  --border:hsl(220,12%,88%);
+  --border-md:hsl(220,12%,80%);
+  --shadow-card:0 0 20px rgba(0,0,0,0.04),0 8px 24px rgba(0,0,0,0.08);
+  --amber-10:hsla(36,90%,50%,0.08);
+  --amber-20:hsla(36,90%,50%,0.14);
+  --amber-30:hsla(36,90%,50%,0.22);
+  --teal-10:hsla(195,80%,45%,0.05);
+}
+
+/* Nav */
+[data-theme="light"] .nav{background:hsla(0,0%,100%,0.92);border-bottom-color:rgba(0,0,0,0.08);}
+[data-theme="light"] .nav__logo{color:var(--fg);}
+[data-theme="light"] .nav__lang{border-color:rgba(0,0,0,0.14);color:var(--fg-muted);}
+[data-theme="light"] .nav__burger span{background:var(--fg);}
+
+/* Mobile menu */
+[data-theme="light"] .nav__links.open{background:#ffffff;border-top-color:var(--amber-30);}
+[data-theme="light"] .nav__links.open .nav__link{border-bottom-color:var(--border);}
+[data-theme="light"] .nav__links.open .nav__link:active{background:var(--muted);}
+
+/* Hero — remplace les hsla hardcodés sombres */
+[data-theme="light"] .hero__bg::after{
+  background:
+    linear-gradient(to right,var(--bg) 35%,hsla(220,20%,97%,0.88) 60%,hsla(220,20%,97%,0.35) 100%),
+    linear-gradient(to top,var(--bg) 0%,transparent 35%,hsla(220,20%,97%,0.55) 100%);
+}
+
+/* Solution card — overlay image */
+[data-theme="light"] .solution-card__img::after{background:linear-gradient(to top,#ffffff 0%,rgba(255,255,255,0.3) 50%,transparent 100%);}
+
+/* Page hero background */
+[data-theme="light"] .page-hero__bg::after{background:linear-gradient(to bottom,var(--bg-darker) 0%,hsla(220,15%,93%,0.94) 55%,var(--bg-darker) 100%);}
+
+/* Boutons */
+[data-theme="light"] .btn--outline{border-color:var(--border-md);color:var(--fg);}
+[data-theme="light"] .btn--connexion{background:var(--muted);border-color:var(--border);color:var(--fg-muted);}
+[data-theme="light"] .btn--connexion:hover{color:var(--fg);border-color:var(--border-md);}
+[data-theme="light"] .btn--ghost{background:var(--muted);border-color:var(--border);color:var(--fg);}
+
+/* Cookie banner */
+[data-theme="light"] #cookie-banner{box-shadow:0 8px 40px rgba(0,0,0,0.12);}
+
+/* Formulaires */
+[data-theme="light"] .field input,[data-theme="light"] .field select,[data-theme="light"] .field textarea{background:#ffffff;border-color:var(--border-md);}
+[data-theme="light"] .field select option{background:#ffffff;color:var(--fg);}
+
+/* Tableau comparatif */
+[data-theme="light"] .comparison-table thead th{background:var(--muted);}
+[data-theme="light"] .comparison-table tbody tr:hover{background:var(--muted);}
+
+/* Transition globale au changement de thème */
+html{transition:background-color 0.25s ease,color 0.25s ease;}
