@@ -18,29 +18,27 @@
 
 <!-- NAVIGATION -->
 <nav class="nav" id="nav">
-  <div class="container nav__inner">
-    <a href="index.html" class="nav__logo"><strong>DST</strong> <span>System</span></a>
+  <div class="nav__inner">
+    <a href="index.html" class="nav__logo">
+      <img src="img/logo-cerbere-or.png" alt="CRBR Solutions" class="nav__logo-img">
+      <strong>CRBR</strong> Solutions
+    </a>
+    <ul class="nav__links" id="navLinks">
+      <li><a href="offres.html" class="nav__link">Nos solutions</a></li>
+      <li><a href="a-propos.html" class="nav__link">À propos</a></li>
+      <li><a href="contact.html" class="nav__link">Contact</a></li>
+      <li class="nav__mobile-actions">
+        <button class="nav__theme" id="themeToggleMobile" aria-label="Passer en mode clair" title="Mode clair"></button>
+        <a href="contact.html?objet=presentation" class="btn btn--tactical btn--sm">Demander une présentation</a>
+      </li>
+    </ul>
+    <div class="nav__actions">
+      <button class="nav__theme" id="themeToggle" aria-label="Passer en mode clair" title="Mode clair"></button>
+      <a href="contact.html?objet=presentation" class="btn btn--tactical btn--sm">Demander une présentation</a>
+    </div>
     <button class="nav__burger" id="navBurger" aria-label="Ouvrir le menu" aria-expanded="false">
       <span></span><span></span><span></span>
     </button>
-    <ul class="nav__menu" id="navMenu">
-      <li class="nav__dropdown">
-        <a href="#" class="nav__link">
-          Notre approche
-          <svg class="nav__chevron" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </a>
-        <ul class="nav__submenu">
-          <li><a href="probleme.html">Le problème</a></li>
-          <li><a href="solution.html">La solution</a></li>
-        </ul>
-      </li>
-      <li><a href="programme.html" class="nav__link">Programme</a></li>
-      <li><a href="fonctionnement.html" class="nav__link">Fonctionnement</a></li>
-      <li><a href="offres.html" class="nav__link">Déploiement</a></li>
-      <li><a href="a-propos.html" class="nav__link">À propos</a></li>
-      <li><a href="contact.html" class="btn btn--red btn--sm">Prendre contact</a></li>
-      <li><a href="connexion.html" class="btn btn--sm nav-connexion" style="background:#1a1a2e;color:#ffffff;border-radius:4px;padding:4px 12px;font-weight:600;">🔐 Connexion</a></li>
-    </ul>
   </div>
 </nav>
 <div class="nav-spacer"></div>
@@ -53,8 +51,13 @@
   <section style="margin-bottom:40px;">
     <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:16px;color:#e8eaf0;">Prestataire</h2>
     <p style="color:#a0a8b8;line-height:1.8;">
-      CRBR Solutions — SASU<br>
-      [coordonnées complètes]
+      SAS TORP — marque commerciale CRBR Solutions<br>
+      SIREN : 942 589 789<br>
+      SIRET : 942 589 789 00018<br>
+      Capital social : 15 000 €<br>
+      Siège social : 9 rue du chasselas, 66690 Sorède, France<br>
+      Email : <a href="mailto:info@crbr-solution.fr" style="color:var(--amber);">info@crbr-solution.fr</a><br>
+      Téléphone : 06 65 44 52 26
     </p>
   </section>
 
@@ -132,36 +135,21 @@
 <!-- FOOTER -->
 <footer class="footer">
   <div class="container">
-    <div class="footer__grid">
+    <div class="footer__inner">
       <div class="footer__brand">
-        <div class="footer__logo"><strong>CRBR</strong> Solutions</div>
-        <p>Formation opérationnelle professionnelle à destination des forces de sécurité, d'intervention et de protection.</p>
+        <img src="img/logo-cerbere-or.png" alt="CRBR Solutions" class="nav__logo-img" style="height:22px;width:22px;">
+        <strong>CRBR</strong> Solutions
+        <span style="margin-left:8px;font-weight:400;">— Conception de Réponse Basées sur les Retex</span>
       </div>
-      <div class="footer__col">
-        <h4>Navigation</h4>
-        <ul>
-          <li><a href="programme.html">Le programme</a></li>
-          <li><a href="fonctionnement.html">Fonctionnement</a></li>
-          <li><a href="offres.html">Déploiement</a></li>
-          <li><a href="a-propos.html">À propos</a></li>
-          <li><a href="contact.html">Contact</a></li>
-          <li><a href="plaquette.html" target="_blank" onclick="CRBRTrack?.event('download', 'plaquette_pdf')">Plaquette PDF</a></li>
-        </ul>
-      </div>
-      <div class="footer__col">
-        <h4>Contact</h4>
-        <p>info@crbr-solution.fr<br>06 65 44 52 26</p>
-      </div>
-    </div>
-    <div class="footer__bottom">
-      <p>© 2026 CRBR Solutions — Conception de Réponse Basées sur les Retex. Tous droits réservés.</p>
-      <p style="font-size:12px;color:#6b7280;margin-top:8px;">
-        <a href="mentions-legales.html" style="color:#6b7280;text-decoration:none;">Mentions légales</a>
-        &nbsp;·&nbsp;
-        <a href="confidentialite.html" style="color:#6b7280;text-decoration:none;">Politique de confidentialité</a>
-        &nbsp;·&nbsp;
-        <a href="cgv.html" style="color:#6b7280;text-decoration:none;">CGV</a>
-      </p>
+      <nav class="footer__links">
+        <a href="offres.html">Nos solutions</a>
+        <a href="a-propos.html">À propos</a>
+        <a href="contact.html">Contact</a>
+        <a href="mentions-legales.html">Mentions légales</a>
+        <a href="cgv.html">CGV</a>
+        <a href="confidentialite.html">Confidentialité</a>
+      </nav>
+      <p class="footer__copy">&copy; <script>document.write(new Date().getFullYear())</script> CRBR Solutions. Tous droits réservés.</p>
     </div>
   </div>
 </footer>

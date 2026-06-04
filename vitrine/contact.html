@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Contact — CRBR Solutions</title>
-  <meta name="description" content="Prenez contact avec CRBR Solutions pour un premier échange sans engagement. Nous répondons sous 48h.">
+  <title>Contact — Demander une présentation | CRBR Solutions</title>
+  <meta name="description" content="Décrivez vos besoins en entraînement opérationnel. CRBR Solutions vous répond sous 48h avec une proposition sur-mesure — sans engagement.">
+  <link rel="canonical" href="https://www.crbr-solution.fr/contact.html">
   <meta name="robots" content="index, follow">
   <meta property="og:title" content="Contact — CRBR Solutions">
   <meta property="og:description" content="Un premier échange sans engagement pour analyser votre besoin et vous proposer la solution adaptée.">
@@ -15,6 +16,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="icon" href="img/logo-cerbere-or.png" type="image/png">
   <link rel="stylesheet" href="css/style.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"ProfessionalService","name":"CRBR Solutions","alternateName":"SAS TORP","description":"Consultant en solutions d'entraînement opérationnel pour les forces de sécurité. Simulateurs de tir laser, shooting house modulaire, appui opérationnel mobile.","url":"https://www.crbr-solution.fr","telephone":"+33665445226","email":"info@crbr-solution.fr","address":{"@type":"PostalAddress","streetAddress":"9 rue du chasselas","addressLocality":"Sorède","postalCode":"66690","addressCountry":"FR"}}
+  </script>
   <script>(function(){try{var t=localStorage.getItem('crbr_theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();</script>
   <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
 </head>
@@ -35,14 +39,12 @@
         <button class="nav__theme" id="themeToggleMobile" aria-label="Passer en mode clair" title="Mode clair"></button>
         <button class="nav__lang" id="langToggleMobile" onclick="CRBRi18n.toggle()">🇬🇧 EN</button>
         <a href="contact.html?objet=presentation" class="btn btn--tactical btn--sm">Demander une présentation</a>
-        <a href="connexion.html" class="btn btn--connexion btn--sm">🔐 Connexion</a>
       </li>
     </ul>
     <div class="nav__actions">
       <button class="nav__theme" id="themeToggle" aria-label="Passer en mode clair" title="Mode clair"></button>
       <button class="nav__lang" id="langToggle" onclick="CRBRi18n.toggle()">🇬🇧 EN</button>
       <a href="contact.html?objet=presentation" class="btn btn--tactical btn--sm">Demander une présentation</a>
-      <a href="connexion.html" class="btn btn--connexion btn--sm">🔐 Connexion</a>
     </div>
     <button class="nav__burger" id="navBurger" aria-label="Ouvrir le menu" aria-expanded="false">
       <span></span><span></span><span></span>
@@ -106,10 +108,10 @@
             <select id="formule" name="formule" required>
               <option value="" disabled selected>Sélectionner un objet…</option>
               <option value="presentation">Demander une présentation</option>
-              <option value="offre-base">Offre Base — devis</option>
+              <option value="offre-essentiel">Offre Essentiel — devis</option>
               <option value="offre-operationnel">Offre Opérationnel — devis</option>
               <option value="offre-premium">Offre Premium — devis</option>
-              <option value="programme-mobile">Programme Mobile — devis</option>
+              <option value="offre-intervention">Intervention sur site — devis</option>
               <option value="sur-mesure">Solution sur mesure</option>
               <option value="devis">Demande de devis (général)</option>
               <option value="evaluation">Évaluation des besoins</option>
